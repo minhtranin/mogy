@@ -8,15 +8,6 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: deb
-            arch: x86_64
-          - target: appimage
-            arch: x86_64
-
     runs-on: ubuntu-latest
 
     steps:
@@ -44,7 +35,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --target ${{ matrix.target }}-${{ matrix.arch }}
+          args: --bundles deb,appimage
           tagName: v__VERSION__
           releaseName: 'Mogy v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
