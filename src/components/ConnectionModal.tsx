@@ -25,34 +25,38 @@ export default function ConnectionModal({
   const [newName, setNewName] = useState("");
   const [newUri, setNewUri] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setSelectedIndex(0);
       setMode("list");
+      // Focus the container for keyboard nav in list mode
+      setTimeout(() => containerRef.current?.focus(), 50);
     }
   }, [isOpen]);
 
   useEffect(() => {
-    if (mode === "add" && nameInputRef.current) {
-      nameInputRef.current.focus();
+    if (mode === "add") {
+      setTimeout(() => nameInputRef.current?.focus(), 50);
+    } else if (isOpen) {
+      containerRef.current?.focus();
     }
-  }, [mode]);
+  }, [mode, isOpen]);
 
-  const handleKeyDown = useCallback(
+  const handleListKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (mode === "add") {
-        if (e.key === "Escape") {
-          setMode("list");
-          e.preventDefault();
-        }
-        if (e.key === "Enter" && newName && newUri) {
-          onAdd(newName, newUri);
-          setNewName("");
-          setNewUri("");
-          setMode("list");
-          e.preventDefault();
-        }
+      // In add mode, only handle close and submit from the form inputs
+      if (mode === "add") return;
+
+      // Close on Escape or Ctrl+[ or q
+      if (
+        e.key === "Escape" ||
+        (e.ctrlKey && e.key === "[") ||
+        (!e.ctrlKey && e.key === "q")
+      ) {
+        onClose();
+        e.preventDefault();
         return;
       }
 
@@ -75,6 +79,8 @@ export default function ConnectionModal({
           e.preventDefault();
           break;
         case "a":
+          setNewName("");
+          setNewUri("");
           setMode("add");
           e.preventDefault();
           break;
@@ -84,31 +90,54 @@ export default function ConnectionModal({
           }
           e.preventDefault();
           break;
-        case "Escape":
-        case "q":
-          onClose();
-          e.preventDefault();
-          break;
       }
     },
-    [connections, selectedIndex, mode, newName, newUri, onConnect, onAdd, onDelete, onClose]
+    [connections, selectedIndex, mode, onConnect, onDelete, onClose]
+  );
+
+  const handleAddFormKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape" || (e.ctrlKey && e.key === "[")) {
+        setMode("list");
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.key === "Enter" && newName && newUri) {
+        onAdd(newName, newUri);
+        setNewName("");
+        setNewUri("");
+        setMode("list");
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // Stop all other keys from bubbling to the outer handler
+      e.stopPropagation();
+    },
+    [newName, newUri, onAdd]
   );
 
   if (!isOpen) return null;
 
   return (
-    <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+    <div
+      className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
       <div
-        className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg w-[500px] max-h-[400px] shadow-2xl"
+        ref={containerRef}
+        className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-[500px] max-h-[400px] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
+        onKeyDown={handleListKeyDown}
         tabIndex={0}
-        ref={(el) => el?.focus()}
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
-          <span className="text-sm text-[var(--accent)]">Connections</span>
+          <span className="text-sm text-[var(--accent)] font-medium">
+            Connections
+          </span>
           <span className="text-xs text-[var(--text-muted)]">
-            j/k navigate | Enter connect | a add | d delete | q close
+            j/k | Enter connect | a add | d del | Esc close
           </span>
         </div>
 
@@ -122,10 +151,10 @@ export default function ConnectionModal({
               connections.map((conn, i) => (
                 <div
                   key={conn.name}
-                  className={`flex items-center justify-between px-4 py-2 cursor-pointer ${
+                  className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors ${
                     i === selectedIndex
-                      ? "bg-[var(--bg-surface)]"
-                      : "hover:bg-[var(--bg-surface)]"
+                      ? "bg-[var(--accent-dim)] border-l-2 border-[var(--accent)]"
+                      : "border-l-2 border-transparent hover:bg-[var(--bg-surface)]"
                   }`}
                   onClick={() => {
                     onConnect(conn.name);
@@ -134,7 +163,7 @@ export default function ConnectionModal({
                 >
                   <div className="flex items-center gap-2">
                     {conn.name === activeConnection && (
-                      <span className="text-[var(--success)] text-xs">*</span>
+                      <span className="w-2 h-2 rounded-full bg-[var(--success)]" />
                     )}
                     <span className="text-sm">{conn.name}</span>
                   </div>
@@ -146,7 +175,7 @@ export default function ConnectionModal({
             )}
           </div>
         ) : (
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-3" onKeyDown={handleAddFormKeyDown}>
             <div>
               <label className="text-xs text-[var(--text-muted)] block mb-1">
                 Name
@@ -171,7 +200,7 @@ export default function ConnectionModal({
               />
             </div>
             <div className="text-xs text-[var(--text-muted)]">
-              Enter to save | Escape to cancel
+              Enter to save | Esc to cancel
             </div>
           </div>
         )}

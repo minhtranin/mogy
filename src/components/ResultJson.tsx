@@ -1,11 +1,20 @@
-import { JsonView, darkStyles } from "react-json-view-lite";
-import "react-json-view-lite/dist/index.css";
+import { useRef, useEffect, useCallback } from "react";
+import VimJsonEditor, { type VimJsonEditorHandle } from "./VimJsonEditor";
 
 interface ResultJsonProps {
   data: unknown[];
+  focused: boolean;
 }
 
-export default function ResultJson({ data }: ResultJsonProps) {
+export default function ResultJson({ data, focused }: ResultJsonProps) {
+  const editorRef = useRef<VimJsonEditorHandle>(null);
+
+  useEffect(() => {
+    if (focused) {
+      editorRef.current?.focus();
+    }
+  }, [focused]);
+
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-[var(--text-muted)]">
@@ -15,20 +24,11 @@ export default function ResultJson({ data }: ResultJsonProps) {
   }
 
   const displayData = data.length === 1 ? data[0] : data;
+  const jsonText = JSON.stringify(displayData, null, 2);
 
   return (
-    <div className="h-full overflow-auto p-3">
-      <div className="text-xs text-[var(--text-muted)] mb-2">
-        {data.length} document{data.length !== 1 ? "s" : ""}
-      </div>
-      <JsonView
-        data={displayData as object}
-        style={{
-          ...darkStyles,
-          container: "json-view",
-        }}
-        shouldExpandNode={(level) => level < 3}
-      />
+    <div className="h-full overflow-hidden">
+      <VimJsonEditor ref={editorRef} value={jsonText} />
     </div>
   );
 }

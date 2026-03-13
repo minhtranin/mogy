@@ -1,5 +1,5 @@
 use crate::db::client::MongoState;
-use mongodb::bson::{self, doc, Document};
+use mongodb::bson::{self, doc, oid::ObjectId, Document};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -31,9 +31,82 @@ pub struct QueryResult {
     pub page_size: u64,
 }
 
+/// Convert serde_json::Value to bson::Bson, handling extended JSON patterns
+/// like {"$oid": "..."} → ObjectId, {"$numberLong": "..."} → Int64, etc.
+fn json_value_to_bson(val: &serde_json::Value) -> bson::Bson {
+    match val {
+        serde_json::Value::Object(map) => {
+            if map.len() == 1 {
+                if let Some(oid_str) = map.get("$oid").and_then(|v| v.as_str()) {
+                    if let Ok(oid) = ObjectId::parse_str(oid_str) {
+                        return bson::Bson::ObjectId(oid);
+                    }
+                }
+                if let Some(date_val) = map.get("$date") {
+                    if let Some(millis) = date_val.as_i64() {
+                        return bson::Bson::DateTime(bson::DateTime::from_millis(millis));
+                    }
+                    if let Some(s) = date_val.as_str() {
+                        if let Ok(dt) = bson::DateTime::parse_rfc3339_str(s) {
+                            return bson::Bson::DateTime(dt);
+                        }
+                    }
+                    if let Some(obj) = date_val.as_object() {
+                        if let Some(millis) = obj
+                            .get("$numberLong")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<i64>().ok())
+                        {
+                            return bson::Bson::DateTime(bson::DateTime::from_millis(millis));
+                        }
+                    }
+                }
+                if let Some(s) = map.get("$numberLong").and_then(|v| v.as_str()) {
+                    if let Ok(n) = s.parse::<i64>() {
+                        return bson::Bson::Int64(n);
+                    }
+                }
+                if let Some(s) = map.get("$numberInt").and_then(|v| v.as_str()) {
+                    if let Ok(n) = s.parse::<i32>() {
+                        return bson::Bson::Int32(n);
+                    }
+                }
+                if let Some(s) = map.get("$numberDouble").and_then(|v| v.as_str()) {
+                    if let Ok(n) = s.parse::<f64>() {
+                        return bson::Bson::Double(n);
+                    }
+                }
+            }
+            let doc: Document = map
+                .iter()
+                .map(|(k, v)| (k.clone(), json_value_to_bson(v)))
+                .collect();
+            bson::Bson::Document(doc)
+        }
+        serde_json::Value::Array(arr) => {
+            bson::Bson::Array(arr.iter().map(json_value_to_bson).collect())
+        }
+        serde_json::Value::String(s) => bson::Bson::String(s.clone()),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
+                    bson::Bson::Int32(i as i32)
+                } else {
+                    bson::Bson::Int64(i)
+                }
+            } else if let Some(f) = n.as_f64() {
+                bson::Bson::Double(f)
+            } else {
+                bson::Bson::Double(0.0)
+            }
+        }
+        serde_json::Value::Bool(b) => bson::Bson::Boolean(*b),
+        serde_json::Value::Null => bson::Bson::Null,
+    }
+}
+
 fn json_to_bson_doc(val: &serde_json::Value) -> Result<Document, String> {
-    let bson_val = bson::to_bson(val).map_err(|e| format!("Invalid BSON: {}", e))?;
-    match bson_val {
+    match json_value_to_bson(val) {
         bson::Bson::Document(doc) => Ok(doc),
         _ => Err("Expected a document".to_string()),
     }
@@ -75,9 +148,7 @@ pub async fn execute_query(
                 find = find.projection(json_to_bson_doc(proj_val)?);
             }
 
-            let mut cursor = find
-                .await
-                .map_err(|e| format!("Find failed: {}", e))?;
+            let mut cursor = find.await.map_err(|e| format!("Find failed: {}", e))?;
 
             let mut documents = Vec::new();
             while cursor
@@ -141,8 +212,6 @@ pub async fn execute_query(
     }
 }
 
-/// Execute a raw MongoDB query string (JavaScript-like syntax)
-/// Parses: db.collection.find({...}).sort({...}).limit(N) or db.collection.aggregate([...])
 #[tauri::command]
 pub async fn execute_raw_query(
     db: String,
@@ -152,7 +221,6 @@ pub async fn execute_raw_query(
     state: State<'_, MongoState>,
 ) -> Result<QueryResult, String> {
     let query_text = query_text.trim();
-
     let parsed = parse_query_string(query_text)?;
 
     let request = match parsed.query_type {
@@ -161,26 +229,24 @@ pub async fn execute_raw_query(
                 if parsed.args.is_empty() || parsed.args == "{}" {
                     None
                 } else {
-                    Some(
-                        serde_json::from_str(&parsed.args).map_err(|e| {
-                            format!("Invalid JSON filter: {}. Input: {}", e, parsed.args)
-                        })?,
-                    )
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    })?)
                 };
             let sort: Option<serde_json::Value> = parsed
                 .sort
                 .as_ref()
                 .filter(|s| !s.is_empty())
-                .map(|s| serde_json::from_str(s))
+                .map(|s| json5::from_str(s))
                 .transpose()
-                .map_err(|e| format!("Invalid sort JSON: {}", e))?;
+                .map_err(|e| format!("Invalid sort: {}", e))?;
             let projection: Option<serde_json::Value> = parsed
                 .projection
                 .as_ref()
                 .filter(|s| !s.is_empty())
-                .map(|s| serde_json::from_str(s))
+                .map(|s| json5::from_str(s))
                 .transpose()
-                .map_err(|e| format!("Invalid projection JSON: {}", e))?;
+                .map_err(|e| format!("Invalid projection: {}", e))?;
 
             QueryRequest {
                 db,
@@ -199,11 +265,9 @@ pub async fn execute_raw_query(
                 if parsed.args.is_empty() || parsed.args == "[]" {
                     None
                 } else {
-                    Some(
-                        serde_json::from_str(&parsed.args).map_err(|e| {
-                            format!("Invalid JSON pipeline: {}. Input: {}", e, parsed.args)
-                        })?,
-                    )
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid pipeline: {}. Input: {}", e, parsed.args)
+                    })?)
                 };
             QueryRequest {
                 db,
@@ -222,6 +286,39 @@ pub async fn execute_raw_query(
     execute_query(request, state).await
 }
 
+/// Update a single document by replacing it
+#[tauri::command]
+pub async fn update_document(
+    db: String,
+    collection: String,
+    document_json: String,
+    state: State<'_, MongoState>,
+) -> Result<(), String> {
+    let client = state.get_client().await?;
+    let coll = client.database(&db).collection::<Document>(&collection);
+
+    let json_val: serde_json::Value =
+        serde_json::from_str(&document_json).map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    let doc = json_to_bson_doc(&json_val)?;
+
+    let id = doc
+        .get("_id")
+        .ok_or("Document must have an _id field")?
+        .clone();
+
+    let filter = doc! { "_id": id };
+
+    let mut replacement = doc.clone();
+    replacement.remove("_id");
+
+    coll.replace_one(filter, replacement)
+        .await
+        .map_err(|e| format!("Update failed: {}", e))?;
+
+    Ok(())
+}
+
 struct ParsedQuery {
     collection: String,
     query_type: QueryType,
@@ -231,8 +328,6 @@ struct ParsedQuery {
     limit: Option<i64>,
 }
 
-/// Find the matching closing bracket/paren starting at position `start` (which should be the opening char).
-/// Respects nesting and string literals.
 fn find_matching_close(input: &str, start: usize) -> Option<usize> {
     let chars: Vec<char> = input.chars().collect();
     let open = chars[start];
@@ -253,7 +348,7 @@ fn find_matching_close(input: &str, start: usize) -> Option<usize> {
 
         if in_string {
             if ch == '\\' {
-                i += 1; // skip escaped char
+                i += 1;
             } else if ch == string_char {
                 in_string = false;
             }
@@ -285,31 +380,23 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
         .strip_prefix("db.")
         .ok_or("Query must start with 'db.'")?;
 
-    // Detect the method: .find( or .aggregate(
-    let (collection, method_start, query_type) =
-        if let Some(pos) = after_db.find(".find(") {
-            (
-                after_db[..pos].to_string(),
-                pos + 5, // index of '(' in ".find("
-                QueryType::Find,
-            )
-        } else if let Some(pos) = after_db.find(".aggregate(") {
-            (
-                after_db[..pos].to_string(),
-                pos + 10, // index of '(' in ".aggregate("
-                QueryType::Aggregate,
-            )
-        } else {
-            return Err("Query must contain .find() or .aggregate()".to_string());
-        };
+    let (collection, method_start, query_type) = if let Some(pos) = after_db.find(".find(") {
+        (after_db[..pos].to_string(), pos + 5, QueryType::Find)
+    } else if let Some(pos) = after_db.find(".aggregate(") {
+        (
+            after_db[..pos].to_string(),
+            pos + 10,
+            QueryType::Aggregate,
+        )
+    } else {
+        return Err("Query must contain .find() or .aggregate()".to_string());
+    };
 
-    // Find the matching closing paren for the method call
-    let close_pos = find_matching_close(after_db, method_start)
-        .ok_or("Unmatched parenthesis in query")?;
+    let close_pos =
+        find_matching_close(after_db, method_start).ok_or("Unmatched parenthesis in query")?;
 
     let args = after_db[method_start + 1..close_pos].trim().to_string();
 
-    // Parse chained methods after the closing paren (only for find)
     let mut sort = None;
     let mut projection = None;
     let mut limit = None;
@@ -337,7 +424,6 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
                     break;
                 }
             } else if rest.starts_with("skip(") {
-                // skip() is handled via pagination, ignore
                 if let Some(close) = rest.find(')') {
                     rest = &rest[close + 1..];
                 } else {

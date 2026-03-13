@@ -12,11 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "Mogy - MongoDB Query Tool",
-        "width": 1200,
-        "height": 800,
+        "title": "Mogy",
+        "width": 1800,
+        "height": 1400,
+        "center": true,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false
       }
     ],
     "security": {

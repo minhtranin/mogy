@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -12,6 +12,8 @@ interface ResultTableProps {
   pageSize: number;
   totalCount: number;
   onPageChange: (page: number) => void;
+  onExpandRow: (doc: unknown, index: number) => void;
+  focused: boolean;
 }
 
 export default function ResultTable({
@@ -20,11 +22,87 @@ export default function ResultTable({
   pageSize,
   totalCount,
   onPageChange,
+  onExpandRow,
+  focused,
 }: ResultTableProps) {
+  const [selectedRow, setSelectedRow] = useState(0);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+
+  // Stable refs to avoid re-creating handler
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+  const selectedRowRef = useRef(selectedRow);
+  selectedRowRef.current = selectedRow;
+  const onExpandRowRef = useRef(onExpandRow);
+  onExpandRowRef.current = onExpandRow;
+
+  // Reset selection when data changes
+  useEffect(() => {
+    setSelectedRow(0);
+  }, [data]);
+
+  // Scroll selected row into view
+  useEffect(() => {
+    const el = rowRefs.current.get(selectedRow);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedRow]);
+
+  // Stable keyboard handler — never re-created
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!focusedRef.current) return;
+      const len = dataRef.current.length;
+
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          e.preventDefault();
+          setSelectedRow((r) => Math.min(r + 1, len - 1));
+          break;
+        case "k":
+        case "ArrowUp":
+          e.preventDefault();
+          setSelectedRow((r) => Math.max(r - 1, 0));
+          break;
+        case "h":
+        case "ArrowLeft":
+          e.preventDefault();
+          if (tableRef.current) tableRef.current.scrollLeft -= 100;
+          break;
+        case "l":
+        case "ArrowRight":
+          e.preventDefault();
+          if (tableRef.current) tableRef.current.scrollLeft += 100;
+          break;
+        case "g":
+          e.preventDefault();
+          setSelectedRow(0);
+          break;
+        case "G":
+          e.preventDefault();
+          setSelectedRow(len - 1);
+          break;
+        case "Enter":
+          e.preventDefault();
+          {
+            const row = selectedRowRef.current;
+            const doc = dataRef.current[row];
+            if (doc) onExpandRowRef.current(doc, row);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
     if (data.length === 0) return [];
 
-    // Collect all unique keys from all documents
     const allKeys = new Set<string>();
     data.forEach((doc) => {
       if (doc && typeof doc === "object") {
@@ -37,10 +115,22 @@ export default function ResultTable({
       header: key,
       cell: ({ getValue }) => {
         const val = getValue();
-        if (val === null || val === undefined) return <span className="text-[var(--text-muted)]">null</span>;
-        if (typeof val === "object") return <span className="text-[var(--warning)]">{JSON.stringify(val)}</span>;
-        if (typeof val === "boolean") return <span className="text-[var(--accent)]">{String(val)}</span>;
-        if (typeof val === "number") return <span className="text-[var(--success)]">{String(val)}</span>;
+        if (val === null || val === undefined)
+          return <span className="text-[var(--text-muted)]">null</span>;
+        if (typeof val === "object")
+          return (
+            <span className="text-[var(--warning)]">
+              {JSON.stringify(val)}
+            </span>
+          );
+        if (typeof val === "boolean")
+          return (
+            <span className="text-[var(--accent)]">{String(val)}</span>
+          );
+        if (typeof val === "number")
+          return (
+            <span className="text-[var(--success)]">{String(val)}</span>
+          );
         return <span>{String(val)}</span>;
       },
     }));
@@ -66,7 +156,7 @@ export default function ResultTable({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-auto">
+      <div ref={tableRef} className="flex-1 overflow-auto">
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 bg-[var(--bg-secondary)]">
             {table.getHeaderGroups().map((headerGroup) => (
@@ -86,17 +176,29 @@ export default function ResultTable({
             ))}
           </thead>
           <tbody>
-            {table.getRowModel().rows.map((row) => (
+            {table.getRowModel().rows.map((row, idx) => (
               <tr
                 key={row.id}
-                className="hover:bg-[var(--bg-surface)] border-b border-[var(--border)]"
+                ref={(el) => {
+                  if (el) rowRefs.current.set(idx, el);
+                }}
+                className={`border-b border-[var(--border)] cursor-pointer ${
+                  idx === selectedRow && focused
+                    ? "bg-[var(--bg-surface)] ring-1 ring-[var(--accent)]"
+                    : "hover:bg-[var(--bg-surface)]"
+                }`}
+                onClick={() => setSelectedRow(idx)}
+                onDoubleClick={() => onExpandRow(data[idx], idx)}
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
                     className="px-3 py-1.5 whitespace-nowrap max-w-[300px] truncate"
                   >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    {flexRender(
+                      cell.column.columnDef.cell,
+                      cell.getContext()
+                    )}
                   </td>
                 ))}
               </tr>
@@ -109,7 +211,8 @@ export default function ResultTable({
       {totalPages > 1 && (
         <div className="flex items-center justify-between px-3 py-2 border-t border-[var(--border)] bg-[var(--bg-secondary)] text-sm">
           <span className="text-[var(--text-muted)]">
-            {totalCount} documents | Page {page} of {totalPages}
+            {totalCount} documents | Page {page} of {totalPages} |{" "}
+            Row {selectedRow + 1}/{data.length}
           </span>
           <div className="flex gap-2">
             <button

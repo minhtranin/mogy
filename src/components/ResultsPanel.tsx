@@ -1,7 +1,21 @@
-import { useState } from "react";
+import {
+  useState,
+  useCallback,
+  useRef,
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+} from "react";
 import ResultTable from "./ResultTable";
 import ResultJson from "./ResultJson";
+import VimJsonEditor, { type VimJsonEditorHandle } from "./VimJsonEditor";
 import type { QueryResult } from "../lib/tauri-commands";
+import { updateDocument, parseCollectionFromQuery } from "../lib/tauri-commands";
+
+type ViewState =
+  | { mode: "table" }
+  | { mode: "json" }
+  | { mode: "detail"; document: unknown; index: number };
 
 interface ResultsPanelProps {
   result: QueryResult | null;
@@ -10,100 +24,271 @@ interface ResultsPanelProps {
   focused: boolean;
   onFocus: () => void;
   onPageChange: (page: number) => void;
+  db: string | null;
+  lastQueryText: string;
+  onQueryRefresh: () => void;
 }
 
-export default function ResultsPanel({
-  result,
-  loading,
-  error,
-  focused,
-  onFocus,
-  onPageChange,
-}: ResultsPanelProps) {
-  const [viewMode, setViewMode] = useState<"table" | "json">("table");
+export interface ResultsPanelHandle {
+  setViewMode: (mode: "table" | "json") => void;
+  getViewMode: () => string;
+  container: HTMLDivElement | null;
+}
 
-  // Auto-switch to JSON for aggregate results
-  const effectiveMode =
-    result?.query_type === "Aggregate" ? "json" : viewMode;
+export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
+  function ResultsPanel(
+    {
+      result,
+      loading,
+      error,
+      focused,
+      onFocus,
+      onPageChange,
+      db,
+      lastQueryText,
+      onQueryRefresh,
+    },
+    ref
+  ) {
+    const [view, setView] = useState<ViewState>({ mode: "table" });
+    const [confirmSave, setConfirmSave] = useState<string | null>(null);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [saveSuccess, setSaveSuccess] = useState(false);
+    const detailEditorRef = useRef<VimJsonEditorHandle>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
-  return (
-    <div
-      className={`flex flex-col h-full border ${
-        focused ? "border-[var(--accent)]" : "border-[var(--border)]"
-      }`}
-      onClick={onFocus}
-    >
-      {/* Results header */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-secondary)] border-b border-[var(--border)]">
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">
-            Results
-          </span>
-          {result && (
-            <span className="text-xs text-[var(--text-secondary)]">
-              {result.query_type === "Find"
-                ? `${result.total_count} docs`
-                : `${result.documents.length} docs (aggregate)`}
+    useImperativeHandle(ref, () => ({
+      setViewMode(mode: "table" | "json") {
+        if (view.mode !== "detail") {
+          setView({ mode });
+        }
+      },
+      getViewMode() {
+        return view.mode;
+      },
+      get container() {
+        return containerRef.current;
+      },
+    }));
+
+    const effectiveMode =
+      view.mode === "detail"
+        ? "detail"
+        : result?.query_type === "Aggregate"
+          ? "json"
+          : view.mode;
+
+    useEffect(() => {
+      if (view.mode === "detail" && focused) {
+        setTimeout(() => detailEditorRef.current?.focus(), 50);
+      }
+    }, [view.mode, focused]);
+
+    const handleExpandRow = useCallback((doc: unknown, index: number) => {
+      setView({ mode: "detail", document: doc, index });
+    }, []);
+
+    const handleDetailBack = useCallback(() => {
+      setView({ mode: "table" });
+    }, []);
+
+    const handleDetailSave = useCallback((text: string) => {
+      try {
+        JSON.parse(text);
+      } catch {
+        setSaveError("Invalid JSON");
+        return;
+      }
+      setConfirmSave(text);
+    }, []);
+
+    const handleConfirmSave = useCallback(async () => {
+      if (!confirmSave || !db) return;
+
+      const collection = parseCollectionFromQuery(lastQueryText);
+      if (!collection) {
+        setSaveError("Could not determine collection from query");
+        setConfirmSave(null);
+        return;
+      }
+
+      try {
+        await updateDocument(db, collection, confirmSave);
+        setSaveSuccess(true);
+        setConfirmSave(null);
+        setTimeout(() => setSaveSuccess(false), 2000);
+        onQueryRefresh();
+      } catch (e) {
+        setSaveError(String(e));
+        setConfirmSave(null);
+      }
+    }, [confirmSave, db, lastQueryText, onQueryRefresh]);
+
+    const handleCancelSave = useCallback(() => {
+      setConfirmSave(null);
+    }, []);
+
+    // Escape / Ctrl+[ from detail mode
+    useEffect(() => {
+      if (!focused) return;
+      const handler = (e: KeyboardEvent) => {
+        const isEscLike =
+          e.key === "Escape" || (e.ctrlKey && e.key === "[");
+
+        if (isEscLike && confirmSave) {
+          e.preventDefault();
+          handleCancelSave();
+          return;
+        }
+        if (isEscLike && view.mode === "detail") {
+          e.preventDefault();
+          handleDetailBack();
+        }
+      };
+      window.addEventListener("keydown", handler);
+      return () => window.removeEventListener("keydown", handler);
+    }, [focused, view.mode, confirmSave, handleDetailBack, handleCancelSave]);
+
+    return (
+      <div
+        ref={containerRef}
+        tabIndex={-1}
+        className={`flex flex-col h-full border outline-none ${
+          focused ? "border-[var(--accent)]" : "border-transparent"
+        }`}
+        onClick={onFocus}
+      >
+        {/* Results header */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-secondary)] border-b border-[var(--border)]">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">
+              {effectiveMode === "detail" ? "Document Detail" : "Results"}
             </span>
+            {result && effectiveMode !== "detail" && (
+              <span className="text-xs text-[var(--text-secondary)]">
+                {result.query_type === "Find"
+                  ? `${result.total_count} docs | p${result.page}`
+                  : `${result.documents.length} docs (aggregate)`}
+              </span>
+            )}
+            {effectiveMode === "detail" && (
+              <span className="text-xs text-[var(--text-muted)]">
+                Esc back | :w save | :q back
+              </span>
+            )}
+            {saveSuccess && (
+              <span className="text-xs text-[var(--success)]">Saved!</span>
+            )}
+            {saveError && (
+              <span className="text-xs text-[var(--error)]">{saveError}</span>
+            )}
+          </div>
+          {effectiveMode !== "detail" && (
+            <div className="flex gap-1 text-xs text-[var(--text-muted)]">
+              <span className="mr-2">H table | L json | ^N/^P page</span>
+              <button
+                onClick={() => setView({ mode: "table" })}
+                className={`px-2 py-0.5 rounded ${
+                  effectiveMode === "table"
+                    ? "bg-[var(--accent)] text-[var(--bg-primary)]"
+                    : "hover:text-[var(--text-primary)]"
+                }`}
+              >
+                Table
+              </button>
+              <button
+                onClick={() => setView({ mode: "json" })}
+                className={`px-2 py-0.5 rounded ${
+                  effectiveMode === "json"
+                    ? "bg-[var(--accent)] text-[var(--bg-primary)]"
+                    : "hover:text-[var(--text-primary)]"
+                }`}
+              >
+                JSON
+              </button>
+            </div>
           )}
         </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => setViewMode("table")}
-            className={`px-2 py-0.5 text-xs rounded ${
-              effectiveMode === "table"
-                ? "bg-[var(--accent)] text-[var(--bg-primary)]"
-                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            Table
-          </button>
-          <button
-            onClick={() => setViewMode("json")}
-            className={`px-2 py-0.5 text-xs rounded ${
-              effectiveMode === "json"
-                ? "bg-[var(--accent)] text-[var(--bg-primary)]"
-                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-            }`}
-          >
-            JSON
-          </button>
-        </div>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-hidden">
-        {loading && (
-          <div className="flex items-center justify-center h-full text-[var(--accent)]">
-            Running query...
+        {/* Content */}
+        <div className="flex-1 overflow-hidden">
+          {loading && (
+            <div className="flex items-center justify-center h-full text-[var(--accent)]">
+              Running query...
+            </div>
+          )}
+          {error && (
+            <div className="p-3 text-[var(--error)] text-sm whitespace-pre-wrap">
+              {error}
+            </div>
+          )}
+          {!loading && !error && !result && (
+            <div className="flex items-center justify-center h-full text-[var(--text-muted)]">
+              Run a query to see results (Ctrl+Enter)
+            </div>
+          )}
+          {!loading && !error && result && (
+            <>
+              {effectiveMode === "detail" && view.mode === "detail" && (
+                <VimJsonEditor
+                  ref={detailEditorRef}
+                  value={JSON.stringify(view.document, null, 2)}
+                  onSave={handleDetailSave}
+                  onQuit={handleDetailBack}
+                />
+              )}
+              {effectiveMode === "table" && (
+                <ResultTable
+                  data={result.documents}
+                  page={result.page}
+                  pageSize={result.page_size}
+                  totalCount={result.total_count}
+                  onPageChange={onPageChange}
+                  onExpandRow={handleExpandRow}
+                  focused={focused}
+                />
+              )}
+              {effectiveMode === "json" && (
+                <ResultJson data={result.documents} focused={focused} />
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Save confirmation modal */}
+        {confirmSave && (
+          <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center">
+            <div
+              className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-[400px] p-4 shadow-2xl"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleConfirmSave();
+                if (e.key === "Escape" || (e.ctrlKey && e.key === "["))
+                  handleCancelSave();
+              }}
+              tabIndex={0}
+              ref={(el) => el?.focus()}
+            >
+              <div className="text-sm mb-3">
+                Save changes to this document?
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={handleCancelSave}
+                  className="px-3 py-1.5 text-xs bg-[var(--bg-surface)] rounded hover:bg-[var(--border)]"
+                >
+                  Cancel (Esc)
+                </button>
+                <button
+                  onClick={handleConfirmSave}
+                  className="px-3 py-1.5 text-xs bg-[var(--accent)] text-[var(--bg-primary)] rounded hover:bg-[var(--accent-hover)]"
+                >
+                  Save (Enter)
+                </button>
+              </div>
+            </div>
           </div>
-        )}
-        {error && (
-          <div className="p-3 text-[var(--error)] text-sm whitespace-pre-wrap">
-            {error}
-          </div>
-        )}
-        {!loading && !error && !result && (
-          <div className="flex items-center justify-center h-full text-[var(--text-muted)]">
-            Run a query to see results (Ctrl+Enter)
-          </div>
-        )}
-        {!loading && !error && result && (
-          <>
-            {effectiveMode === "table" ? (
-              <ResultTable
-                data={result.documents}
-                page={result.page}
-                pageSize={result.page_size}
-                totalCount={result.total_count}
-                onPageChange={onPageChange}
-              />
-            ) : (
-              <ResultJson data={result.documents} />
-            )}
-          </>
         )}
       </div>
-    </div>
-  );
-}
+    );
+  }
+);

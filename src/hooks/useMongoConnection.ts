@@ -6,9 +6,10 @@ import {
   deleteConnection,
   connectToServer,
   disconnectFromServer,
-  getActiveConnection,
   listDatabases,
   listCollections,
+  loadSession,
+  saveSession,
 } from "../lib/tauri-commands";
 
 export function useMongoConnection() {
@@ -28,7 +29,7 @@ export function useMongoConnection() {
       const conns = await listConnections();
       setConnections(conns);
     } catch (e) {
-      setError(String(e));
+      console.error("[mogy] failed to load connections:", e);
     }
   }, []);
 
@@ -56,23 +57,49 @@ export function useMongoConnection() {
     [refreshConnections]
   );
 
-  const connect = useCallback(async (name: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await connectToServer(name);
-      setActiveConnection(name);
-      const dbs = await listDatabases();
-      setDatabases(dbs);
-      setSelectedDb(null);
-      setSelectedCollection(null);
-      setCollections([]);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const persistSession = useCallback(
+    (conn: string | null, db: string | null, coll: string | null, editorContent?: string | null) => {
+      saveSession(conn, db, coll, editorContent).catch(() => {});
+    },
+    []
+  );
+
+  const connect = useCallback(
+    async (name: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await connectToServer(name);
+        setActiveConnection(result.name);
+
+        const dbs = await listDatabases();
+        setDatabases(dbs);
+
+        // Auto-select database from URI if available
+        if (result.default_database) {
+          setSelectedDb(result.default_database);
+          setSelectedCollection(null);
+          try {
+            const colls = await listCollections(result.default_database);
+            setCollections(colls);
+          } catch {
+            setCollections([]);
+          }
+          persistSession(result.name, result.default_database, null);
+        } else {
+          setSelectedDb(null);
+          setSelectedCollection(null);
+          setCollections([]);
+          persistSession(result.name, null, null);
+        }
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [persistSession]
+  );
 
   const disconnect = useCallback(async () => {
     try {
@@ -82,37 +109,83 @@ export function useMongoConnection() {
       setCollections([]);
       setSelectedDb(null);
       setSelectedCollection(null);
+      persistSession(null, null, null);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [persistSession]);
 
-  const selectDatabase = useCallback(async (db: string) => {
-    setSelectedDb(db);
-    setSelectedCollection(null);
+  const selectDatabase = useCallback(
+    async (db: string) => {
+      setSelectedDb(db);
+      setSelectedCollection(null);
+      try {
+        const colls = await listCollections(db);
+        setCollections(colls);
+      } catch (e) {
+        setError(String(e));
+      }
+      persistSession(activeConnection, db, null);
+    },
+    [activeConnection, persistSession]
+  );
+
+  const selectCollection = useCallback(
+    (collection: string) => {
+      setSelectedCollection(collection);
+      persistSession(activeConnection, selectedDb, collection);
+    },
+    [activeConnection, selectedDb, persistSession]
+  );
+
+  const refreshCollections = useCallback(async () => {
+    if (!selectedDb) return;
     try {
-      const colls = await listCollections(db);
+      const colls = await listCollections(selectedDb);
       setCollections(colls);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [selectedDb]);
 
-  const selectCollection = useCallback((collection: string) => {
-    setSelectedCollection(collection);
-  }, []);
-
-  // Load initial state
+  // Restore session on mount
   useEffect(() => {
-    refreshConnections();
-    getActiveConnection().then((name) => {
-      if (name) {
-        setActiveConnection(name);
-        listDatabases()
-          .then(setDatabases)
-          .catch(() => {});
+    const restore = async () => {
+      await refreshConnections();
+      try {
+        const session = await loadSession();
+        if (session.connection) {
+          setLoading(true);
+          try {
+            const result = await connectToServer(session.connection);
+            setActiveConnection(result.name);
+            const dbs = await listDatabases();
+            setDatabases(dbs);
+
+            const db = session.database || result.default_database;
+            if (db) {
+              setSelectedDb(db);
+              try {
+                const colls = await listCollections(db);
+                setCollections(colls);
+              } catch {
+                setCollections([]);
+              }
+            }
+            if (session.collection) {
+              setSelectedCollection(session.collection);
+            }
+          } catch {
+            // Session connection no longer valid, ignore
+          } finally {
+            setLoading(false);
+          }
+        }
+      } catch {
+        // No session, that's fine
       }
-    });
+    };
+    restore();
   }, [refreshConnections]);
 
   return {
@@ -125,6 +198,7 @@ export function useMongoConnection() {
     error,
     loading,
     refreshConnections,
+    refreshCollections,
     addConnection,
     removeConnection,
     connect,
