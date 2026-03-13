@@ -3,6 +3,9 @@ name: Build
 on:
   push:
     branches: [master, main]
+    paths-ignore:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
   release:
     types: [published]
 
