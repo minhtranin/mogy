@@ -1,17 +1,19 @@
 # Mogy
 
-A keyboard-driven MongoDB GUI query tool built with Tauri v2 + React.
+A keyboard-driven MongoDB query UI with first-class Vim support.
+
+Built with Tauri v2 + React + CodeMirror.
 
 ![Mogy](./screenshot.png)
 
 ## Features
 
-- **Keyboard-driven** - Full vim-style navigation with `j/k` for up/down, `/` for search
-- **Query execution** - Run MongoDB queries with syntax support for `.find()`, `.aggregate()`, `.updateMany()`, etc.
+- **First-class Vim support** - Full vim mode in the editor with `jk` to exit insert mode, `:w` to save
+- **Keyboard-driven** - Navigate everything with `j/k`, `h/l`, `g/G`, and leader key (`Ctrl+Space`)
+- **Query execution** - Run MongoDB queries: `.find()`, `.aggregate()`, `.updateMany()`, `.count()`, etc.
 - **Connection management** - Save and manage multiple MongoDB connections
 - **Session persistence** - Remembers your last connection, database, collection, and editor content
-- **Query files** - Save/load query files for reusable scripts
-- **Vim integration** - CodeMirror with vim mode support
+- **Query files** - Save/load query scripts for reuse
 
 ## Keybindings
 
