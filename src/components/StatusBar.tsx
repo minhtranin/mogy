@@ -23,12 +23,17 @@ export default function StatusBar({
   const appWindow = getCurrentWindow();
 
   return (
-    <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-secondary)] border-b border-[var(--border)] text-xs select-none">
-      {/* Left: draggable area + connection info */}
-      <div
-        className="flex items-center gap-3 min-w-0 flex-1 cursor-default"
-        onMouseDown={() => appWindow.startDragging()}
-      >
+    <div
+      className="flex items-center justify-between px-3 py-2 bg-[var(--bg-secondary)] border-b border-[var(--border)] text-xs select-none"
+      style={{ minHeight: "40px" }}
+      onMouseDown={(e) => {
+        if ((e.target as HTMLElement).tagName !== "BUTTON") {
+          appWindow.startDragging();
+        }
+      }}
+    >
+      {/* Left: connection info */}
+      <div className="flex items-center gap-3 min-w-0 flex-1">
         <span className="text-[var(--accent)] font-bold shrink-0">MOGY</span>
         <span className="text-[var(--border)] shrink-0">|</span>
         {activeConnection ? (
@@ -56,11 +61,8 @@ export default function StatusBar({
         )}
       </div>
 
-      {/* Center: draggable filename area */}
-      <div
-        className="flex items-center gap-1 shrink-0 cursor-default"
-        onMouseDown={() => appWindow.startDragging()}
-      >
+      {/* Center: filename */}
+      <div className="flex items-center gap-1 shrink-0">
         {currentFile ? (
           <>
             <span className="text-[var(--text-secondary)]">{currentFile}</span>
@@ -73,20 +75,12 @@ export default function StatusBar({
         )}
       </div>
 
-      {/* Right: hints + window controls (NOT draggable) */}
+      {/* Right: hints + window controls */}
       <div className="flex items-center gap-3 min-w-0 flex-1 justify-end">
         {loading && (
-          <span
-            className="text-[var(--warning)] shrink-0 cursor-default"
-            onMouseDown={() => appWindow.startDragging()}
-          >
-            Running...
-          </span>
+          <span className="text-[var(--warning)] shrink-0">Running...</span>
         )}
-        <span
-          className="text-[var(--text-muted)] shrink-0 cursor-default"
-          onMouseDown={() => appWindow.startDragging()}
-        >
+        <span className="text-[var(--text-muted)] shrink-0">
           ^Enter run | ^K/^J nav | ? help
         </span>
         <div className="flex items-center shrink-0">

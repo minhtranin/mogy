@@ -58,8 +58,8 @@ export function useMongoConnection() {
   );
 
   const persistSession = useCallback(
-    (conn: string | null, db: string | null, coll: string | null, editorContent?: string | null) => {
-      saveSession(conn, db, coll, editorContent).catch(() => {});
+    (conn: string | null, db: string | null, coll: string | null, editorContent?: string | null, currentFile?: string | null) => {
+      saveSession(conn, db, coll, editorContent, currentFile).catch(() => {});
     },
     []
   );

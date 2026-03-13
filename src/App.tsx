@@ -96,7 +96,8 @@ export default function App() {
       mongoRef.current.activeConnection,
       mongoRef.current.selectedDb,
       mongoRef.current.selectedCollection,
-      content
+      content,
+      currentFileRef.current
     ).catch(() => {});
   }, []);
 
@@ -366,11 +367,27 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
-  // Restore last editor content on mount
+  // Restore last editor content and file on mount
   useEffect(() => {
     loadSession()
       .then((session) => {
-        if (session.last_editor_content) {
+        if (session.current_file) {
+          // Load the last opened file
+          loadQueryFile(session.current_file)
+            .then((content) => {
+              editorRef.current?.setText(content);
+              setCurrentFile(session.current_file);
+              setIsDirty(false);
+            })
+            .catch(() => {
+              // File doesn't exist, fall back to untitled
+              if (session.last_editor_content) {
+                editorRef.current?.setText(session.last_editor_content);
+                setIsDirty(false);
+              }
+            });
+        } else if (session.last_editor_content) {
+          // No last file but have content - use that
           editorRef.current?.setText(session.last_editor_content);
           setIsDirty(false);
         }
@@ -394,7 +411,8 @@ export default function App() {
       mongoRef.current.activeConnection,
       mongoRef.current.selectedDb,
       mongoRef.current.selectedCollection,
-      content
+      content,
+      file
     ).catch(() => {});
 
     Promise.all([fileSave, sessionSave]).then(() => {

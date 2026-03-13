@@ -7,6 +7,20 @@ use tauri::State;
 pub enum QueryType {
     Find,
     Aggregate,
+    Count,
+    DeleteOne,
+    DeleteMany,
+    InsertOne,
+    InsertMany,
+    UpdateOne,
+    UpdateMany,
+    ReplaceOne,
+    Distinct,
+    FindOne,
+    FindOneAndUpdate,
+    FindOneAndDelete,
+    FindOneAndReplace,
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +223,355 @@ pub async fn execute_query(
                 page_size: count,
             })
         }
+        QueryType::Count => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let count = collection
+                .count_documents(filter)
+                .await
+                .map_err(|e| format!("Count failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "count": count })],
+                total_count: count,
+                query_type: QueryType::Count,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::DeleteOne => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let result = collection
+                .delete_one(filter)
+                .await
+                .map_err(|e| format!("DeleteOne failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "deletedCount": result.deleted_count })],
+                total_count: result.deleted_count,
+                query_type: QueryType::DeleteOne,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::DeleteMany => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let result = collection
+                .delete_many(filter)
+                .await
+                .map_err(|e| format!("DeleteMany failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "deletedCount": result.deleted_count })],
+                total_count: result.deleted_count,
+                query_type: QueryType::DeleteMany,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::InsertOne => {
+            let doc_val = match &request.projection {
+                Some(d) => json_to_bson_doc(d)?,
+                None => return Err("InsertOne requires a document".to_string()),
+            };
+
+            let result = collection
+                .insert_one(doc_val)
+                .await
+                .map_err(|e| format!("InsertOne failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "insertedId": result.inserted_id })],
+                total_count: 1,
+                query_type: QueryType::InsertOne,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::InsertMany => {
+            let docs_val: Vec<Document> = match &request.projection {
+                Some(d) => {
+                    if let Some(arr) = d.as_array() {
+                        arr.iter()
+                            .map(|v| json_to_bson_doc(v))
+                            .collect::<Result<Vec<_>, _>>()?
+                    } else {
+                        vec![json_to_bson_doc(d)?]
+                    }
+                }
+                None => return Err("InsertMany requires documents".to_string()),
+            };
+
+            let result = collection
+                .insert_many(docs_val)
+                .await
+                .map_err(|e| format!("InsertMany failed: {}", e))?;
+
+            let inserted_ids: Vec<serde_json::Value> = result
+                .inserted_ids
+                .values()
+                .map(|id| serde_json::to_value(id).unwrap_or(serde_json::Value::Null))
+                .collect();
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "insertedCount": inserted_ids.len(), "insertedIds": inserted_ids })],
+                total_count: inserted_ids.len() as u64,
+                query_type: QueryType::InsertMany,
+                page: 1,
+                page_size: inserted_ids.len() as u64,
+            })
+        }
+        QueryType::UpdateOne => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+            let update = match &request.pipeline {
+                Some(p) => {
+                    // Extract $set from pipeline
+                    p.iter()
+                        .find_map(|stage| stage.get("$set"))
+                        .map(|v| json_to_bson_doc(v))
+                        .transpose()?
+                        .unwrap_or(doc! {})
+                }
+                None => doc! {},
+            };
+
+            let result = collection
+                .update_one(filter, update)
+                .await
+                .map_err(|e| format!("UpdateOne failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
+                total_count: result.matched_count,
+                query_type: QueryType::UpdateOne,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::UpdateMany => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+            let update = match &request.pipeline {
+                Some(p) => {
+                    p.iter()
+                        .find_map(|stage| stage.get("$set"))
+                        .map(|v| json_to_bson_doc(v))
+                        .transpose()?
+                        .unwrap_or(doc! {})
+                }
+                None => doc! {},
+            };
+
+            let result = collection
+                .update_many(filter, update)
+                .await
+                .map_err(|e| format!("UpdateMany failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
+                total_count: result.matched_count,
+                query_type: QueryType::UpdateMany,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::ReplaceOne => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+            let replacement = match &request.pipeline {
+                Some(p) => {
+                    p.iter()
+                        .find_map(|stage| stage.get("$set"))
+                        .map(|v| json_to_bson_doc(v))
+                        .transpose()?
+                        .unwrap_or(doc! {})
+                }
+                None => doc! {},
+            };
+
+            let result = collection
+                .replace_one(filter, replacement)
+                .await
+                .map_err(|e| format!("ReplaceOne failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
+                total_count: result.matched_count,
+                query_type: QueryType::ReplaceOne,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::Distinct => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let docs = collection
+                .distinct("null", filter)
+                .await
+                .map_err(|e| format!("Distinct failed: {}", e))?;
+
+            let values: Vec<serde_json::Value> = docs
+                .iter()
+                .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+                .collect();
+
+            let count = values.len() as u64;
+            Ok(QueryResult {
+                documents: values,
+                total_count: count,
+                query_type: QueryType::Distinct,
+                page: 1,
+                page_size: count,
+            })
+        }
+        QueryType::FindOne => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let doc = collection
+                .find_one(filter)
+                .await
+                .map_err(|e| format!("FindOne failed: {}", e))?;
+
+            let documents = match doc {
+                Some(d) => {
+                    let json_val: serde_json::Value =
+                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
+                    vec![json_val]
+                }
+                None => vec![],
+            };
+
+            let count = documents.len() as u64;
+            Ok(QueryResult {
+                documents,
+                total_count: count,
+                query_type: QueryType::FindOne,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::FindOneAndUpdate => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+            let update = match &request.projection {
+                Some(u) => json_to_bson_doc(u)?,
+                None => doc! {},
+            };
+
+            let doc = collection
+                .find_one_and_update(filter, update)
+                .await
+                .map_err(|e| format!("FindOneAndUpdate failed: {}", e))?;
+
+            let documents = match doc {
+                Some(d) => {
+                    let json_val: serde_json::Value =
+                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
+                    vec![json_val]
+                }
+                None => vec![],
+            };
+
+            let count = documents.len() as u64;
+            Ok(QueryResult {
+                documents,
+                total_count: count,
+                query_type: QueryType::FindOneAndUpdate,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::FindOneAndDelete => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let doc = collection
+                .find_one_and_delete(filter)
+                .await
+                .map_err(|e| format!("FindOneAndDelete failed: {}", e))?;
+
+            let documents = match doc {
+                Some(d) => {
+                    let json_val: serde_json::Value =
+                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
+                    vec![json_val]
+                }
+                None => vec![],
+            };
+
+            let count = documents.len() as u64;
+            Ok(QueryResult {
+                documents,
+                total_count: count,
+                query_type: QueryType::FindOneAndDelete,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::FindOneAndReplace => {
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+            let replacement = match &request.projection {
+                Some(r) => json_to_bson_doc(r)?,
+                None => doc! {},
+            };
+
+            let doc = collection
+                .find_one_and_replace(filter, replacement)
+                .await
+                .map_err(|e| format!("FindOneAndReplace failed: {}", e))?;
+
+            let documents = match doc {
+                Some(d) => {
+                    let json_val: serde_json::Value =
+                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
+                    vec![json_val]
+                }
+                None => vec![],
+            };
+
+            let count = documents.len() as u64;
+            Ok(QueryResult {
+                documents,
+                total_count: count,
+                query_type: QueryType::FindOneAndReplace,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::Other => {
+            Err("Unsupported query type".to_string())
+        }
     }
 }
 
@@ -280,6 +643,180 @@ pub async fn execute_raw_query(
                 sort: None,
                 projection: None,
             }
+        }
+        QueryType::Count => {
+            let filter: Option<serde_json::Value> =
+                if parsed.args.is_empty() || parsed.args == "{}" {
+                    None
+                } else {
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    })?)
+                };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: QueryType::Count,
+                filter,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
+        QueryType::DeleteOne | QueryType::DeleteMany => {
+            let filter: Option<serde_json::Value> =
+                if parsed.args.is_empty() || parsed.args == "{}" {
+                    None
+                } else {
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    })?)
+                };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: parsed.query_type,
+                filter,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
+        QueryType::InsertOne | QueryType::InsertMany => {
+            let doc: Option<serde_json::Value> =
+                if parsed.args.is_empty() {
+                    None
+                } else {
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid document: {}. Input: {}", e, parsed.args)
+                    })?)
+                };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: parsed.query_type,
+                filter: None,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: doc,
+            }
+        }
+        QueryType::UpdateOne | QueryType::UpdateMany | QueryType::ReplaceOne => {
+            // Args format: {filter}, {update}
+            let parts: Vec<&str> = parsed.args.splitn(2, ',').collect();
+            let filter: Option<serde_json::Value> = if parts.is_empty() || parts[0].trim().is_empty() || parts[0].trim() == "{}" {
+                None
+            } else {
+                Some(json5::from_str(parts[0]).map_err(|e| {
+                    format!("Invalid filter: {}. Input: {}", e, parts[0])
+                })?)
+            };
+            let update: Option<serde_json::Value> = if parts.len() > 1 && !parts[1].trim().is_empty() {
+                Some(json5::from_str(parts[1]).map_err(|e| {
+                    format!("Invalid update: {}. Input: {}", e, parts[1])
+                })?)
+            } else {
+                None
+            };
+            // Combine filter and update into a single document for pipeline
+            let pipeline: Option<Vec<serde_json::Value>> = Some(vec![
+                serde_json::json!({ "$match": filter }),
+                serde_json::json!({ "$set": update }),
+            ]);
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: if matches!(parsed.query_type, QueryType::ReplaceOne) {
+                    QueryType::ReplaceOne
+                } else {
+                    QueryType::UpdateMany
+                },
+                filter: None,
+                pipeline,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
+        QueryType::Distinct => {
+            let filter: Option<serde_json::Value> =
+                if parsed.args.is_empty() || parsed.args == "{}" {
+                    None
+                } else {
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    })?)
+                };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: QueryType::Distinct,
+                filter,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
+        QueryType::FindOne => {
+            let filter: Option<serde_json::Value> =
+                if parsed.args.is_empty() || parsed.args == "{}" {
+                    None
+                } else {
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    })?)
+                };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: QueryType::FindOne,
+                filter,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
+        QueryType::FindOneAndUpdate | QueryType::FindOneAndDelete | QueryType::FindOneAndReplace => {
+            let parts: Vec<&str> = parsed.args.splitn(2, ',').collect();
+            let filter: Option<serde_json::Value> = if parts.is_empty() || parts[0].trim().is_empty() || parts[0].trim() == "{}" {
+                None
+            } else {
+                Some(json5::from_str(parts[0]).map_err(|e| {
+                    format!("Invalid filter: {}. Input: {}", e, parts[0])
+                })?)
+            };
+            let update: Option<serde_json::Value> = if parts.len() > 1 && !parts[1].trim().is_empty() {
+                Some(json5::from_str(parts[1]).map_err(|e| {
+                    format!("Invalid update: {}. Input: {}", e, parts[1])
+                })?)
+            } else {
+                None
+            };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: parsed.query_type,
+                filter,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: update,
+            }
+        }
+        QueryType::Other => {
+            return Err(format!("Unsupported method: {}", query_text));
         }
     };
 
@@ -380,22 +917,41 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
         .strip_prefix("db.")
         .ok_or("Query must start with 'db.'")?;
 
-    let (collection, method_start, query_type) = if let Some(pos) = after_db.find(".find(") {
-        (after_db[..pos].to_string(), pos + 5, QueryType::Find)
-    } else if let Some(pos) = after_db.find(".aggregate(") {
-        (
-            after_db[..pos].to_string(),
-            pos + 10,
-            QueryType::Aggregate,
-        )
-    } else {
-        return Err("Query must contain .find() or .aggregate()".to_string());
-    };
+    // Find the first method call (e.g., .find(), .count(), .deleteMany(), etc.)
+    let dot_pos = after_db.find('.').ok_or("Query must contain a method call (e.g., .find())")?;
+
+    let collection = after_db[..dot_pos].to_string();
+    let method_part = &after_db[dot_pos + 1..];
+
+    // Find method name and its arguments
+    let paren_open = method_part.find('(').ok_or("Method must have parentheses")?;
+    let method_name = method_part[..paren_open].to_string();
+    let method_open = paren_open;
 
     let close_pos =
-        find_matching_close(after_db, method_start).ok_or("Unmatched parenthesis in query")?;
+        find_matching_close(method_part, method_open).ok_or("Unmatched parenthesis in query")?;
 
-    let args = after_db[method_start + 1..close_pos].trim().to_string();
+    let args = method_part[method_open + 1..close_pos].trim().to_string();
+
+    // Map method name to QueryType
+    let query_type = match method_name.as_str() {
+        "find" => QueryType::Find,
+        "aggregate" => QueryType::Aggregate,
+        "count" => QueryType::Count,
+        "deleteOne" => QueryType::DeleteOne,
+        "deleteMany" => QueryType::DeleteMany,
+        "insertOne" => QueryType::InsertOne,
+        "insertMany" => QueryType::InsertMany,
+        "updateOne" => QueryType::UpdateOne,
+        "updateMany" => QueryType::UpdateMany,
+        "replaceOne" => QueryType::ReplaceOne,
+        "distinct" => QueryType::Distinct,
+        "findOne" => QueryType::FindOne,
+        "findOneAndUpdate" => QueryType::FindOneAndUpdate,
+        "findOneAndDelete" => QueryType::FindOneAndDelete,
+        "findOneAndReplace" => QueryType::FindOneAndReplace,
+        _ => QueryType::Other,
+    };
 
     let mut sort = None;
     let mut projection = None;

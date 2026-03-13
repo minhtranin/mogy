@@ -110,11 +110,13 @@ pub async fn save_session_cmd(
     database: Option<String>,
     collection: Option<String>,
     last_editor_content: Option<String>,
+    current_file: Option<String>,
 ) -> Result<(), String> {
     session::save_session(&Session {
         connection,
         database,
         collection,
         last_editor_content,
+        current_file,
     })
 }

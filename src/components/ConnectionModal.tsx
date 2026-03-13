@@ -60,36 +60,46 @@ export default function ConnectionModal({
         return;
       }
 
-      switch (e.key) {
-        case "j":
-        case "ArrowDown":
-          setSelectedIndex((i) => Math.min(i + 1, connections.length - 1));
-          e.preventDefault();
-          break;
-        case "k":
-        case "ArrowUp":
-          setSelectedIndex((i) => Math.max(i - 1, 0));
-          e.preventDefault();
-          break;
-        case "Enter":
-          if (connections[selectedIndex]) {
-            onConnect(connections[selectedIndex].name);
-            onClose();
-          }
-          e.preventDefault();
-          break;
-        case "a":
-          setNewName("");
-          setNewUri("");
-          setMode("add");
-          e.preventDefault();
-          break;
-        case "d":
-          if (connections[selectedIndex]) {
-            onDelete(connections[selectedIndex].name);
-          }
-          e.preventDefault();
-          break;
+      // Next item - j, ArrowDown, n, Ctrl+N
+      if (e.key === "j" || e.key === "ArrowDown" || e.key === "n" || (e.ctrlKey && e.key === "n")) {
+        setSelectedIndex((i) => Math.min(i + 1, connections.length - 1));
+        e.preventDefault();
+        return;
+      }
+
+      // Prev item - k, ArrowUp, p, Ctrl+P
+      if (e.key === "k" || e.key === "ArrowUp" || e.key === "p" || (e.ctrlKey && e.key === "p")) {
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+        e.preventDefault();
+        return;
+      }
+
+      // Enter to connect
+      if (e.key === "Enter") {
+        if (connections[selectedIndex]) {
+          onConnect(connections[selectedIndex].name);
+          onClose();
+        }
+        e.preventDefault();
+        return;
+      }
+
+      // 'a' to add new connection
+      if (e.key === "a") {
+        setNewName("");
+        setNewUri("");
+        setMode("add");
+        e.preventDefault();
+        return;
+      }
+
+      // 'd' to delete connection
+      if (e.key === "d") {
+        if (connections[selectedIndex]) {
+          onDelete(connections[selectedIndex].name);
+        }
+        e.preventDefault();
+        return;
       }
     },
     [connections, selectedIndex, mode, onConnect, onDelete, onClose]
