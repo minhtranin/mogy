@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #1e1e2e;
+  --bg-secondary: #181825;
+  --bg-surface: #313244;
+  --text-primary: #cdd6f4;
+  --text-secondary: #a6adc8;
+  --text-muted: #6c7086;
+  --accent: #89b4fa;
+  --accent-hover: #74c7ec;
+  --border: #45475a;
+  --success: #a6e3a1;
+  --error: #f38ba8;
+  --warning: #fab387;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 14px;
+  overflow: hidden;
+  height: 100vh;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* CodeMirror theme overrides */
+.cm-editor {
+  height: 100%;
+  font-size: 14px;
+}
+
+.cm-editor .cm-content {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+.cm-editor .cm-gutters {
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.cm-editor .cm-activeLineGutter {
+  background: var(--bg-surface);
+}
+
+.cm-editor .cm-activeLine {
+  background: rgba(69, 71, 90, 0.3);
+}
+
+.cm-editor .cm-cursor {
+  border-left-color: var(--accent);
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+/* Vim status bar in editor */
+.cm-vim-panel {
+  background: var(--bg-secondary) !important;
+  color: var(--text-secondary) !important;
+  border-top: 1px solid var(--border) !important;
+  padding: 2px 8px !important;
+  font-size: 12px;
+}
+
+/* Panel focus indicators */
+.panel-focused {
+  border-color: var(--accent) !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+/* JSON viewer overrides */
+.json-view {
+  font-family: "JetBrains Mono", "Fira Code", monospace !important;
+  font-size: 13px !important;
+}

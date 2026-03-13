@@ -1,0 +1,36 @@
+{
+  "name": "mogy",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "cargo tauri"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "4",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "3",
+    "vite": "6"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.40.0",
+    "@replit/codemirror-vim": "^6.3.0",
+    "@tanstack/react-table": "^8.21.3",
+    "@tauri-apps/api": "^2.10.1",
+    "codemirror": "^6.0.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-json-view-lite": "^2.5.0"
+  }
+}
