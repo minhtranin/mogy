@@ -27,6 +27,7 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
   function VimJsonEditor({ value, onSave, onQuit }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const initialValueRef = useRef(value);
 
     useImperativeHandle(ref, () => ({
       focus() {
@@ -50,13 +51,14 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
       };
     }, [onSave, onQuit]);
 
+    // Create editor once
     useEffect(() => {
       if (!containerRef.current) return;
 
       ensureExCommands();
 
       const state = EditorState.create({
-        doc: value,
+        doc: initialValueRef.current,
         extensions: [vim(), basicSetup, json(), oneDark],
       });
 
@@ -72,6 +74,18 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
       return () => {
         view.destroy();
       };
+    }, []);
+
+    // Update doc when value changes without destroying editor
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      const current = view.state.doc.toString();
+      if (current !== value) {
+        view.dispatch({
+          changes: { from: 0, to: current.length, insert: value },
+        });
+      }
     }, [value]);
 
     return (

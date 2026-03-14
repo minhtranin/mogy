@@ -4,6 +4,7 @@ import { Vim } from "@replit/codemirror-vim";
 export const editorSaveRef = { current: null as ((text: string) => void) | null };
 export const detailSaveRef = { current: null as ((text: string) => void) | null };
 export const quitCallbackRef = { current: null as (() => void) | null };
+export const saveAndQuitAllRef = { current: null as (() => void) | null };
 
 let defined = false;
 
@@ -23,4 +24,56 @@ export function ensureExCommands() {
   Vim.defineEx("quit", "q", () => {
     quitCallbackRef.current?.();
   });
+
+  Vim.defineEx("wqa", "wqa", () => {
+    saveAndQuitAllRef.current?.();
+  });
+
+  // gc in visual mode — toggle line comments
+  Vim.defineAction("toggleComment", (cm: any) => {
+    const sel = cm.listSelections()[0];
+    const startLine = Math.min(sel.anchor.line, sel.head.line);
+    const endLine = Math.max(sel.anchor.line, sel.head.line);
+
+    let allCommented = true;
+    for (let i = startLine; i <= endLine; i++) {
+      const line = cm.getLine(i);
+      if (line.trim() !== "" && !line.trimStart().startsWith("//")) {
+        allCommented = false;
+        break;
+      }
+    }
+
+    for (let i = endLine; i >= startLine; i--) {
+      const line = cm.getLine(i);
+      if (line.trim() === "") continue;
+
+      if (allCommented) {
+        const idx = line.indexOf("//");
+        const removeLen = line[idx + 2] === " " ? 3 : 2;
+        cm.replaceRange("", { line: i, ch: idx }, { line: i, ch: idx + removeLen });
+      } else {
+        const indent = line.match(/^\s*/)?.[0].length ?? 0;
+        cm.replaceRange("// ", { line: i, ch: indent }, { line: i, ch: indent });
+      }
+    }
+  });
+  Vim.mapCommand("gc", "action", "toggleComment", {}, { context: "visual" });
+
+  // gcc in normal mode — toggle comment on current line
+  Vim.defineAction("toggleCommentLine", (cm: any) => {
+    const cursor = cm.getCursor();
+    const line = cm.getLine(cursor.line);
+    if (line.trim() === "") return;
+
+    if (line.trimStart().startsWith("//")) {
+      const idx = line.indexOf("//");
+      const removeLen = line[idx + 2] === " " ? 3 : 2;
+      cm.replaceRange("", { line: cursor.line, ch: idx }, { line: cursor.line, ch: idx + removeLen });
+    } else {
+      const indent = line.match(/^\s*/)?.[0].length ?? 0;
+      cm.replaceRange("// ", { line: cursor.line, ch: indent }, { line: cursor.line, ch: indent });
+    }
+  });
+  Vim.mapCommand("gcc", "action", "toggleCommentLine", {}, {});
 }

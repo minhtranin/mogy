@@ -1,10 +1,13 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback, memo } from "react";
 import {
   useReactTable,
   getCoreRowModel,
   flexRender,
   type ColumnDef,
+  type Row,
 } from "@tanstack/react-table";
+
+const coreRowModel = getCoreRowModel();
 
 interface ResultTableProps {
   data: unknown[];
@@ -15,6 +18,53 @@ interface ResultTableProps {
   onExpandRow: (doc: unknown, index: number) => void;
   focused: boolean;
 }
+
+interface TableRowProps {
+  row: Row<Record<string, unknown>>;
+  idx: number;
+  isSelected: boolean;
+  focused: boolean;
+  onSelect: (idx: number) => void;
+  onExpand: (doc: unknown, idx: number) => void;
+  data: unknown[];
+  rowRefCallback: (idx: number, el: HTMLTableRowElement | null) => void;
+}
+
+const TableRow = memo(function TableRow({
+  row,
+  idx,
+  isSelected,
+  focused,
+  onSelect,
+  onExpand,
+  data,
+  rowRefCallback,
+}: TableRowProps) {
+  return (
+    <tr
+      ref={(el) => rowRefCallback(idx, el)}
+      className={`border-b border-[var(--border)] cursor-pointer ${
+        isSelected && focused
+          ? "bg-[var(--bg-surface)] ring-1 ring-[var(--accent)]"
+          : "hover:bg-[var(--bg-surface)]"
+      }`}
+      onClick={() => onSelect(idx)}
+      onDoubleClick={() => onExpand(data[idx]!, idx)}
+    >
+      {row.getVisibleCells().map((cell) => (
+        <td
+          key={cell.id}
+          className="px-3 py-1.5 whitespace-nowrap max-w-[300px] truncate"
+        >
+          {flexRender(
+            cell.column.columnDef.cell,
+            cell.getContext()
+          )}
+        </td>
+      ))}
+    </tr>
+  );
+});
 
 export default function ResultTable({
   data,
@@ -117,12 +167,19 @@ export default function ResultTable({
         const val = getValue();
         if (val === null || val === undefined)
           return <span className="text-[var(--text-muted)]">null</span>;
-        if (typeof val === "object")
+        if (typeof val === "object") {
+          if (val && "$date" in val)
+            return (
+              <span className="text-[var(--warning)]">
+                {String((val as Record<string, unknown>).$date)}
+              </span>
+            );
           return (
             <span className="text-[var(--warning)]">
               {JSON.stringify(val)}
             </span>
           );
+        }
         if (typeof val === "boolean")
           return (
             <span className="text-[var(--accent)]">{String(val)}</span>
@@ -139,12 +196,24 @@ export default function ResultTable({
   const table = useReactTable({
     data: data as Record<string, unknown>[],
     columns,
-    getCoreRowModel: getCoreRowModel(),
+    getCoreRowModel: coreRowModel,
     manualPagination: true,
     pageCount: Math.ceil(totalCount / pageSize),
   });
 
   const totalPages = Math.ceil(totalCount / pageSize);
+
+  const handleSelect = useCallback((idx: number) => {
+    setSelectedRow(idx);
+  }, []);
+
+  const rowRefCallback = useCallback((idx: number, el: HTMLTableRowElement | null) => {
+    if (el) {
+      rowRefs.current.set(idx, el);
+    } else {
+      rowRefs.current.delete(idx);
+    }
+  }, []);
 
   if (data.length === 0) {
     return (
@@ -177,31 +246,17 @@ export default function ResultTable({
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row, idx) => (
-              <tr
+              <TableRow
                 key={row.id}
-                ref={(el) => {
-                  if (el) rowRefs.current.set(idx, el);
-                }}
-                className={`border-b border-[var(--border)] cursor-pointer ${
-                  idx === selectedRow && focused
-                    ? "bg-[var(--bg-surface)] ring-1 ring-[var(--accent)]"
-                    : "hover:bg-[var(--bg-surface)]"
-                }`}
-                onClick={() => setSelectedRow(idx)}
-                onDoubleClick={() => onExpandRow(data[idx], idx)}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="px-3 py-1.5 whitespace-nowrap max-w-[300px] truncate"
-                  >
-                    {flexRender(
-                      cell.column.columnDef.cell,
-                      cell.getContext()
-                    )}
-                  </td>
-                ))}
-              </tr>
+                row={row}
+                idx={idx}
+                isSelected={idx === selectedRow}
+                focused={focused}
+                onSelect={handleSelect}
+                onExpand={onExpandRow}
+                data={data}
+                rowRefCallback={rowRefCallback}
+              />
             ))}
           </tbody>
         </table>

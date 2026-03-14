@@ -1,6 +1,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { PanelLayout } from "../hooks/usePanelFocus";
 
+const appWindow = getCurrentWindow();
+
 interface StatusBarProps {
   activeConnection: string | null;
   selectedDb: string | null;
@@ -8,7 +10,9 @@ interface StatusBarProps {
   layout: PanelLayout;
   currentFile: string | null;
   isDirty: boolean;
+  leaderVisible?: boolean;
   onClose: () => void;
+  onCommandPalette: () => void;
 }
 
 export default function StatusBar({
@@ -18,10 +22,10 @@ export default function StatusBar({
   layout,
   currentFile,
   isDirty,
+  leaderVisible,
   onClose,
+  onCommandPalette,
 }: StatusBarProps) {
-  const appWindow = getCurrentWindow();
-
   return (
     <div
       className="flex items-center justify-between px-3 py-2 bg-[var(--bg-secondary)] border-b border-[var(--border)] text-xs select-none"
@@ -77,12 +81,23 @@ export default function StatusBar({
 
       {/* Right: hints + window controls */}
       <div className="flex items-center gap-3 min-w-0 flex-1 justify-end">
-        {loading && (
-          <span className="text-[var(--warning)] shrink-0">Running...</span>
+        {leaderVisible && (
+          <span className="text-[var(--accent)] shrink-0 animate-pulse">^Space...</span>
         )}
-        <span className="text-[var(--text-muted)] shrink-0">
-          ^Enter run | ^K/^J nav | ? help
-        </span>
+        {loading && (
+          <span className="text-[var(--warning)] shrink-0 animate-pulse">Running...</span>
+        )}
+        <button
+          onClick={onCommandPalette}
+          className="w-6 h-6 flex items-center justify-center hover:bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors rounded"
+          title="Command Palette (^Space p)"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="1" y="1" width="14" height="14" rx="2" />
+            <path d="M5 5l3 3-3 3" />
+            <path d="M9 11h3" />
+          </svg>
+        </button>
         <div className="flex items-center shrink-0">
           <button
             onClick={() => appWindow.minimize()}

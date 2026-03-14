@@ -90,6 +90,11 @@ fn json_value_to_bson(val: &serde_json::Value) -> bson::Bson {
                         return bson::Bson::Double(n);
                     }
                 }
+                if let Some(s) = map.get("$numberDecimal").and_then(|v| v.as_str()) {
+                    if let Ok(d) = s.parse::<bson::Decimal128>() {
+                        return bson::Bson::Decimal128(d);
+                    }
+                }
             }
             let doc: Document = map
                 .iter()
@@ -123,6 +128,144 @@ fn json_to_bson_doc(val: &serde_json::Value) -> Result<Document, String> {
     match json_value_to_bson(val) {
         bson::Bson::Document(doc) => Ok(doc),
         _ => Err("Expected a document".to_string()),
+    }
+}
+
+/// Preprocess MongoDB shell helpers like ObjectId('...'), new Date('...'), ISODate('...')
+/// into extended JSON that json5 can parse.
+fn preprocess_mongo_helpers(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // Check for ObjectId('...')
+        if i + 9 <= len && &input[i..i + 9] == "ObjectId(" {
+            if let Some((value, end)) = extract_helper_arg(&chars, i + 9) {
+                result.push_str(&format!(r#"{{"$oid":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+        // Check for new Date('...')
+        if i + 9 <= len && &input[i..i + 9] == "new Date(" {
+            if let Some((value, end)) = extract_helper_arg(&chars, i + 9) {
+                result.push_str(&format!(r#"{{"$date":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+        // Check for ISODate('...')
+        if i + 8 <= len && &input[i..i + 8] == "ISODate(" {
+            if let Some((value, end)) = extract_helper_arg(&chars, i + 8) {
+                result.push_str(&format!(r#"{{"$date":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+        // Check for NumberLong('...')
+        if i + 11 <= len && &input[i..i + 11] == "NumberLong(" {
+            if let Some((value, end)) = extract_helper_arg(&chars, i + 11) {
+                result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+        // Check for Long('...')
+        if i + 5 <= len && &input[i..i + 5] == "Long(" {
+            if let Some((value, end)) = extract_helper_arg(&chars, i + 5) {
+                result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+        // Check for NumberDecimal('...')
+        if i + 14 <= len && &input[i..i + 14] == "NumberDecimal(" {
+            if let Some((value, end)) = extract_helper_arg(&chars, i + 14) {
+                result.push_str(&format!(r#"{{"$numberDecimal":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
+/// Extract the string argument from a helper call like ('...') or ("...")
+/// Returns (value, position after closing paren)
+fn extract_helper_arg(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut i = start;
+    // Skip whitespace
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() {
+        return None;
+    }
+
+    let quote = chars[i];
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    i += 1;
+
+    let mut value = String::new();
+    while i < chars.len() && chars[i] != quote {
+        value.push(chars[i]);
+        i += 1;
+    }
+    if i >= chars.len() {
+        return None;
+    }
+    i += 1; // skip closing quote
+
+    // Skip whitespace and closing paren
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i < chars.len() && chars[i] == ')' {
+        Some((value, i + 1))
+    } else {
+        None
+    }
+}
+
+/// Convert a BSON document to serde_json::Value with dates as ISO strings
+fn bson_doc_to_json(doc: &Document) -> serde_json::Value {
+    let map: serde_json::Map<String, serde_json::Value> = doc
+        .iter()
+        .map(|(k, v)| (k.clone(), bson_to_json_value(v)))
+        .collect();
+    serde_json::Value::Object(map)
+}
+
+fn bson_to_json_value(val: &bson::Bson) -> serde_json::Value {
+    match val {
+        bson::Bson::DateTime(dt) => {
+            match dt.try_to_rfc3339_string() {
+                Ok(s) => serde_json::json!({"$date": s}),
+                Err(_) => serde_json::json!({"$date": dt.timestamp_millis()}),
+            }
+        }
+        bson::Bson::ObjectId(oid) => {
+            serde_json::json!({"$oid": oid.to_hex()})
+        }
+        bson::Bson::Document(doc) => bson_doc_to_json(doc),
+        bson::Bson::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(bson_to_json_value).collect())
+        }
+        bson::Bson::String(s) => serde_json::Value::String(s.clone()),
+        bson::Bson::Boolean(b) => serde_json::Value::Bool(*b),
+        bson::Bson::Null => serde_json::Value::Null,
+        bson::Bson::Int32(n) => serde_json::json!(n),
+        bson::Bson::Int64(n) => serde_json::json!({"$numberLong": n.to_string()}),
+        bson::Bson::Double(f) => serde_json::json!(f),
+        bson::Bson::Decimal128(d) => serde_json::json!({"$numberDecimal": d.to_string()}),
+        // Fall back to default serialization for other types
+        other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
     }
 }
 
@@ -173,9 +316,7 @@ pub async fn execute_query(
                 let doc = cursor
                     .deserialize_current()
                     .map_err(|e| format!("Deserialize error: {}", e))?;
-                let json_val: serde_json::Value =
-                    serde_json::to_value(&doc).map_err(|e| format!("JSON error: {}", e))?;
-                documents.push(json_val);
+                documents.push(bson_doc_to_json(&doc));
             }
 
             Ok(QueryResult {
@@ -195,8 +336,57 @@ pub async fn execute_query(
                 None => vec![],
             };
 
+            let page = request.page.unwrap_or(1);
+            let page_size = request.page_size.unwrap_or(20);
+            let skip = (page - 1) * page_size;
+
+            // Check if pipeline already has $limit stage
+            let has_limit = pipeline.iter().any(|doc| {
+                doc.keys().any(|k| k == "$limit")
+            });
+
+            // Build pipeline with skip and limit (skip must come BEFORE limit!)
+            let mut full_pipeline = pipeline.clone();
+
+            // Add $skip stage for pagination
+            full_pipeline.push(doc! { "$skip": skip as i64 });
+
+            // Add $limit stage if not present (default 20) - must come AFTER skip
+            if !has_limit {
+                full_pipeline.push(doc! { "$limit": page_size as i64 });
+            }
+
+            // Get total count (run pipeline without skip/limit)
+            let count_pipeline: Vec<Document> = pipeline.iter()
+                .filter(|doc| {
+                    let keys: Vec<_> = doc.keys().collect();
+                    !keys.iter().any(|k| *k == "$skip" || *k == "$limit")
+                })
+                .cloned()
+                .collect();
+
+            let total_count = if count_pipeline.is_empty() {
+                // Empty pipeline = count all documents in collection
+                collection.count_documents(doc! {})
+                    .await
+                    .map_err(|e| format!("Count failed: {}", e))?
+            } else {
+                // Run count pipeline
+                let count_cursor = collection
+                    .aggregate(count_pipeline)
+                    .await
+                    .map_err(|e| format!("Count aggregate failed: {}", e))?;
+
+                let mut count = 0u64;
+                let mut count_cursor = count_cursor;
+                while count_cursor.advance().await.map_err(|e| format!("Count cursor error: {}", e))? {
+                    count += 1;
+                }
+                count
+            };
+
             let mut cursor = collection
-                .aggregate(pipeline)
+                .aggregate(full_pipeline)
                 .await
                 .map_err(|e| format!("Aggregate failed: {}", e))?;
 
@@ -209,18 +399,15 @@ pub async fn execute_query(
                 let doc = cursor
                     .deserialize_current()
                     .map_err(|e| format!("Deserialize error: {}", e))?;
-                let json_val: serde_json::Value =
-                    serde_json::to_value(&doc).map_err(|e| format!("JSON error: {}", e))?;
-                documents.push(json_val);
+                documents.push(bson_doc_to_json(&doc));
             }
 
-            let count = documents.len() as u64;
             Ok(QueryResult {
                 documents,
-                total_count: count,
+                total_count,
                 query_type: QueryType::Aggregate,
-                page: 1,
-                page_size: count,
+                page,
+                page_size,
             })
         }
         QueryType::Count => {
@@ -433,7 +620,7 @@ pub async fn execute_query(
 
             let values: Vec<serde_json::Value> = docs
                 .iter()
-                .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+                .map(|v| bson_to_json_value(v))
                 .collect();
 
             let count = values.len() as u64;
@@ -458,9 +645,7 @@ pub async fn execute_query(
 
             let documents = match doc {
                 Some(d) => {
-                    let json_val: serde_json::Value =
-                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
-                    vec![json_val]
+                    vec![bson_doc_to_json(&d)]
                 }
                 None => vec![],
             };
@@ -491,9 +676,7 @@ pub async fn execute_query(
 
             let documents = match doc {
                 Some(d) => {
-                    let json_val: serde_json::Value =
-                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
-                    vec![json_val]
+                    vec![bson_doc_to_json(&d)]
                 }
                 None => vec![],
             };
@@ -520,9 +703,7 @@ pub async fn execute_query(
 
             let documents = match doc {
                 Some(d) => {
-                    let json_val: serde_json::Value =
-                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
-                    vec![json_val]
+                    vec![bson_doc_to_json(&d)]
                 }
                 None => vec![],
             };
@@ -553,9 +734,7 @@ pub async fn execute_query(
 
             let documents = match doc {
                 Some(d) => {
-                    let json_val: serde_json::Value =
-                        serde_json::to_value(&d).map_err(|e| format!("JSON error: {}", e))?;
-                    vec![json_val]
+                    vec![bson_doc_to_json(&d)]
                 }
                 None => vec![],
             };
@@ -584,16 +763,21 @@ pub async fn execute_raw_query(
     state: State<'_, MongoState>,
 ) -> Result<QueryResult, String> {
     let query_text = query_text.trim();
-    let parsed = parse_query_string(query_text)?;
+    let mut parsed = parse_query_string(query_text)?;
+    parsed.args = preprocess_mongo_helpers(&parsed.args);
 
     let request = match parsed.query_type {
         QueryType::Find => {
+            let args_parts = split_top_level_args(&parsed.args);
+            let filter_str = args_parts.first().map(|s| s.as_str()).unwrap_or("");
+            let inline_projection_str = args_parts.get(1).map(|s| s.as_str());
+
             let filter: Option<serde_json::Value> =
-                if parsed.args.is_empty() || parsed.args == "{}" {
+                if filter_str.is_empty() || filter_str == "{}" {
                     None
                 } else {
-                    Some(json5::from_str(&parsed.args).map_err(|e| {
-                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    Some(json5::from_str(filter_str).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, filter_str)
                     })?)
                 };
             let sort: Option<serde_json::Value> = parsed
@@ -603,13 +787,24 @@ pub async fn execute_raw_query(
                 .map(|s| json5::from_str(s))
                 .transpose()
                 .map_err(|e| format!("Invalid sort: {}", e))?;
-            let projection: Option<serde_json::Value> = parsed
-                .projection
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .map(|s| json5::from_str(s))
-                .transpose()
-                .map_err(|e| format!("Invalid projection: {}", e))?;
+            // Inline projection from find({}, {proj}) takes priority over .projection() chain
+            let projection: Option<serde_json::Value> = if let Some(proj_str) = inline_projection_str {
+                if !proj_str.is_empty() {
+                    Some(json5::from_str(proj_str).map_err(|e| {
+                        format!("Invalid projection: {}. Input: {}", e, proj_str)
+                    })?)
+                } else {
+                    None
+                }
+            } else {
+                parsed
+                    .projection
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| json5::from_str(s))
+                    .transpose()
+                    .map_err(|e| format!("Invalid projection: {}", e))?
+            };
 
             QueryRequest {
                 db,
@@ -638,8 +833,8 @@ pub async fn execute_raw_query(
                 query_type: QueryType::Aggregate,
                 filter: None,
                 pipeline,
-                page: None,
-                page_size: None,
+                page,
+                page_size,
                 sort: None,
                 projection: None,
             }
@@ -709,16 +904,16 @@ pub async fn execute_raw_query(
         }
         QueryType::UpdateOne | QueryType::UpdateMany | QueryType::ReplaceOne => {
             // Args format: {filter}, {update}
-            let parts: Vec<&str> = parsed.args.splitn(2, ',').collect();
+            let parts = split_top_level_args(&parsed.args);
             let filter: Option<serde_json::Value> = if parts.is_empty() || parts[0].trim().is_empty() || parts[0].trim() == "{}" {
                 None
             } else {
-                Some(json5::from_str(parts[0]).map_err(|e| {
+                Some(json5::from_str(&parts[0]).map_err(|e| {
                     format!("Invalid filter: {}. Input: {}", e, parts[0])
                 })?)
             };
             let update: Option<serde_json::Value> = if parts.len() > 1 && !parts[1].trim().is_empty() {
-                Some(json5::from_str(parts[1]).map_err(|e| {
+                Some(json5::from_str(&parts[1]).map_err(|e| {
                     format!("Invalid update: {}. Input: {}", e, parts[1])
                 })?)
             } else {
@@ -732,11 +927,7 @@ pub async fn execute_raw_query(
             QueryRequest {
                 db,
                 collection: parsed.collection,
-                query_type: if matches!(parsed.query_type, QueryType::ReplaceOne) {
-                    QueryType::ReplaceOne
-                } else {
-                    QueryType::UpdateMany
-                },
+                query_type: parsed.query_type,
                 filter: None,
                 pipeline,
                 page: None,
@@ -788,16 +979,16 @@ pub async fn execute_raw_query(
             }
         }
         QueryType::FindOneAndUpdate | QueryType::FindOneAndDelete | QueryType::FindOneAndReplace => {
-            let parts: Vec<&str> = parsed.args.splitn(2, ',').collect();
+            let parts = split_top_level_args(&parsed.args);
             let filter: Option<serde_json::Value> = if parts.is_empty() || parts[0].trim().is_empty() || parts[0].trim() == "{}" {
                 None
             } else {
-                Some(json5::from_str(parts[0]).map_err(|e| {
+                Some(json5::from_str(&parts[0]).map_err(|e| {
                     format!("Invalid filter: {}. Input: {}", e, parts[0])
                 })?)
             };
             let update: Option<serde_json::Value> = if parts.len() > 1 && !parts[1].trim().is_empty() {
-                Some(json5::from_str(parts[1]).map_err(|e| {
+                Some(json5::from_str(&parts[1]).map_err(|e| {
                     format!("Invalid update: {}. Input: {}", e, parts[1])
                 })?)
             } else {
@@ -816,7 +1007,10 @@ pub async fn execute_raw_query(
             }
         }
         QueryType::Other => {
-            return Err(format!("Unsupported method: {}", query_text));
+            return Err(format!(
+                "Unsupported method: {}. Supported methods: find, findOne, aggregate, count, distinct, insertOne, insertMany, updateOne, updateMany, replaceOne, deleteOne, deleteMany, findOneAndUpdate, findOneAndDelete, findOneAndReplace",
+                query_text
+            ));
         }
     };
 
@@ -908,6 +1102,59 @@ fn find_matching_close(input: &str, start: usize) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+/// Split arguments at top-level commas, respecting nested braces/brackets/strings.
+/// e.g. "{a: 1}, {$set: {b: 2}}" → ["{a: 1}", "{$set: {b: 2}}"]
+fn split_top_level_args(input: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut string_char = '"';
+    let mut current = String::new();
+
+    for (i, ch) in input.chars().enumerate() {
+        if in_string {
+            current.push(ch);
+            if ch == '\\' {
+                // peek next char
+                if let Some(next) = input.chars().nth(i + 1) {
+                    let _ = next;
+                }
+            } else if ch == string_char {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => {
+                in_string = true;
+                string_char = ch;
+                current.push(ch);
+            }
+            '{' | '[' | '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            '}' | ']' | ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                parts.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        parts.push(trimmed);
+    }
+    parts
 }
 
 fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
@@ -1007,4 +1254,663 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
         projection,
         limit,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── preprocess_mongo_helpers ───
+
+    #[test]
+    fn preprocess_objectid_single_quotes() {
+        let input = r#"{_id: ObjectId('507f1f77bcf86cd799439011')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$oid":"507f1f77bcf86cd799439011"}"#));
+        assert!(!result.contains("ObjectId"));
+    }
+
+    #[test]
+    fn preprocess_objectid_double_quotes() {
+        let input = r#"{_id: ObjectId("507f1f77bcf86cd799439011")}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$oid":"507f1f77bcf86cd799439011"}"#));
+    }
+
+    #[test]
+    fn preprocess_isodate() {
+        let input = r#"{due: ISODate('2026-08-31T07:00:00.000Z')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$date":"2026-08-31T07:00:00.000Z"}"#));
+        assert!(!result.contains("ISODate"));
+    }
+
+    #[test]
+    fn preprocess_new_date() {
+        let input = r#"{created: new Date('2024-01-15T10:30:00.000Z')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$date":"2024-01-15T10:30:00.000Z"}"#));
+        assert!(!result.contains("new Date"));
+    }
+
+    #[test]
+    fn preprocess_multiple_helpers() {
+        let input = r#"{_id: ObjectId('507f1f77bcf86cd799439011'), due: ISODate('2026-08-31T07:00:00.000Z')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$oid":"507f1f77bcf86cd799439011"}"#));
+        assert!(result.contains(r#"{"$date":"2026-08-31T07:00:00.000Z"}"#));
+    }
+
+    #[test]
+    fn preprocess_no_helpers_unchanged() {
+        let input = r#"{name: "test", age: 25}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert_eq!(result, input);
+    }
+
+    // ─── json_value_to_bson: ObjectId ───
+
+    #[test]
+    fn json_to_bson_objectid() {
+        let json: serde_json::Value = serde_json::json!({"$oid": "507f1f77bcf86cd799439011"});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::ObjectId(_)));
+        if let bson::Bson::ObjectId(oid) = bson {
+            assert_eq!(oid.to_hex(), "507f1f77bcf86cd799439011");
+        }
+    }
+
+    // ─── json_value_to_bson: Date ───
+
+    #[test]
+    fn json_to_bson_date_iso_string() {
+        let json: serde_json::Value = serde_json::json!({"$date": "2026-08-31T07:00:00.000Z"});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::DateTime(_)));
+    }
+
+    #[test]
+    fn json_to_bson_date_millis() {
+        let json: serde_json::Value = serde_json::json!({"$date": 1724054400000_i64});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::DateTime(_)));
+    }
+
+    // ─── json_value_to_bson: NumberDecimal ───
+
+    #[test]
+    fn json_to_bson_number_decimal() {
+        let json: serde_json::Value = serde_json::json!({"$numberDecimal": "123.456"});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::Decimal128(_)));
+    }
+
+    // ─── bson_to_json_value round-trip ───
+
+    #[test]
+    fn roundtrip_objectid() {
+        let oid = ObjectId::parse_str("507f1f77bcf86cd799439011").unwrap();
+        let bson_val = bson::Bson::ObjectId(oid);
+
+        // bson → json
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$oid": "507f1f77bcf86cd799439011"}));
+
+        // json → bson (round-trip)
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::ObjectId(_)));
+        if let bson::Bson::ObjectId(o) = back {
+            assert_eq!(o.to_hex(), "507f1f77bcf86cd799439011");
+        }
+    }
+
+    #[test]
+    fn roundtrip_date() {
+        let dt = bson::DateTime::parse_rfc3339_str("2026-08-31T07:00:00.000Z").unwrap();
+        let bson_val = bson::Bson::DateTime(dt);
+
+        // bson → json
+        let json = bson_to_json_value(&bson_val);
+        let date_str = json.get("$date").and_then(|v| v.as_str()).unwrap();
+        assert!(date_str.starts_with("2026-08-31"));
+
+        // json → bson (round-trip)
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::DateTime(_)));
+        if let bson::Bson::DateTime(d) = back {
+            assert_eq!(d.timestamp_millis(), dt.timestamp_millis());
+        }
+    }
+
+    #[test]
+    fn roundtrip_decimal128() {
+        let dec: bson::Decimal128 = "123.456".parse().unwrap();
+        let bson_val = bson::Bson::Decimal128(dec);
+
+        // bson → json
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$numberDecimal": "123.456"}));
+
+        // json → bson (round-trip)
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::Decimal128(_)));
+        if let bson::Bson::Decimal128(d) = back {
+            assert_eq!(d.to_string(), "123.456");
+        }
+    }
+
+    // ─── Full pipeline: preprocess → json5 → bson (simulates save from editor) ───
+
+    #[test]
+    fn save_pipeline_objectid() {
+        // User types ObjectId('...') in editor, preprocessed, parsed, converted to BSON
+        let input = r#"{"_id": ObjectId('507f1f77bcf86cd799439011'), "name": "test"}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+
+        assert!(matches!(doc.get("_id"), Some(bson::Bson::ObjectId(_))));
+        assert!(matches!(doc.get("name"), Some(bson::Bson::String(_))));
+    }
+
+    #[test]
+    fn save_pipeline_isodate() {
+        let input = r#"{"due": ISODate('2026-08-31T07:00:00.000Z')}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+
+        assert!(matches!(doc.get("due"), Some(bson::Bson::DateTime(_))));
+    }
+
+    #[test]
+    fn save_pipeline_new_date() {
+        let input = r#"{"created": new Date('2024-01-15T10:30:00.000Z')}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+
+        assert!(matches!(doc.get("created"), Some(bson::Bson::DateTime(_))));
+    }
+
+    #[test]
+    fn save_pipeline_number_decimal() {
+        // In JSON detail view, NumberDecimal is shown as {"$numberDecimal": "..."}
+        let input = r#"{"price": {"$numberDecimal": "99.99"}}"#;
+        let json: serde_json::Value = json5::from_str(input).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+
+        assert!(matches!(doc.get("price"), Some(bson::Bson::Decimal128(_))));
+        if let Some(bson::Bson::Decimal128(d)) = doc.get("price") {
+            assert_eq!(d.to_string(), "99.99");
+        }
+    }
+
+    // ─── JSON view save round-trip: bson → json → edit → json → bson ───
+
+    #[test]
+    fn jsonview_save_roundtrip_objectid() {
+        let oid = ObjectId::parse_str("507f1f77bcf86cd799439011").unwrap();
+        let doc = doc! { "_id": oid, "name": "test" };
+
+        // DB → JSON (what user sees in detail view)
+        let json = bson_doc_to_json(&doc);
+        let json_str = serde_json::to_string(&json).unwrap();
+
+        // User saves JSON (detail view :w) → parse back → BSON
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        let saved_doc = json_to_bson_doc(&parsed).unwrap();
+
+        assert!(matches!(saved_doc.get("_id"), Some(bson::Bson::ObjectId(_))));
+        if let Some(bson::Bson::ObjectId(o)) = saved_doc.get("_id") {
+            assert_eq!(o.to_hex(), "507f1f77bcf86cd799439011");
+        }
+    }
+
+    #[test]
+    fn jsonview_save_roundtrip_date() {
+        let dt = bson::DateTime::parse_rfc3339_str("2026-08-31T07:00:00.000Z").unwrap();
+        let doc = doc! { "due": dt };
+
+        let json = bson_doc_to_json(&doc);
+        let json_str = serde_json::to_string(&json).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        let saved_doc = json_to_bson_doc(&parsed).unwrap();
+
+        assert!(matches!(saved_doc.get("due"), Some(bson::Bson::DateTime(_))));
+        if let Some(bson::Bson::DateTime(d)) = saved_doc.get("due") {
+            assert_eq!(d.timestamp_millis(), dt.timestamp_millis());
+        }
+    }
+
+    #[test]
+    fn jsonview_save_roundtrip_decimal128() {
+        let dec: bson::Decimal128 = "199.99".parse().unwrap();
+        let doc = doc! { "price": dec };
+
+        let json = bson_doc_to_json(&doc);
+        let json_str = serde_json::to_string(&json).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        let saved_doc = json_to_bson_doc(&parsed).unwrap();
+
+        assert!(matches!(saved_doc.get("price"), Some(bson::Bson::Decimal128(_))));
+        if let Some(bson::Bson::Decimal128(d)) = saved_doc.get("price") {
+            assert_eq!(d.to_string(), "199.99");
+        }
+    }
+
+    // ─── preprocess: Long / NumberLong / NumberDecimal ───
+
+    #[test]
+    fn preprocess_number_long() {
+        let input = r#"{count: NumberLong('2333')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$numberLong":"2333"}"#));
+        assert!(!result.contains("NumberLong"));
+    }
+
+    #[test]
+    fn preprocess_long() {
+        let input = r#"{count: Long('2333')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$numberLong":"2333"}"#));
+        assert!(!result.contains("Long("));
+    }
+
+    #[test]
+    fn preprocess_number_decimal() {
+        let input = r#"{price: NumberDecimal('99.99')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$numberDecimal":"99.99"}"#));
+        assert!(!result.contains("NumberDecimal"));
+    }
+
+    // ─── json_value_to_bson: numbers ───
+
+    #[test]
+    fn json_to_bson_number_long() {
+        let json: serde_json::Value = serde_json::json!({"$numberLong": "2333"});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::Int64(2333)));
+    }
+
+    #[test]
+    fn json_to_bson_number_double() {
+        let json: serde_json::Value = serde_json::json!({"$numberDouble": "3.14"});
+        let bson = json_value_to_bson(&json);
+        if let bson::Bson::Double(f) = bson {
+            assert!((f - 3.14).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected Double, got {:?}", bson);
+        }
+    }
+
+    #[test]
+    fn json_to_bson_plain_int_becomes_int32() {
+        let json: serde_json::Value = serde_json::json!(2333);
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::Int32(2333)));
+    }
+
+    #[test]
+    fn json_to_bson_plain_float_becomes_double() {
+        let json: serde_json::Value = serde_json::json!(23.33);
+        let bson = json_value_to_bson(&json);
+        if let bson::Bson::Double(f) = bson {
+            assert!((f - 23.33).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected Double, got {:?}", bson);
+        }
+    }
+
+    #[test]
+    fn json_to_bson_large_int_becomes_int64() {
+        let json: serde_json::Value = serde_json::json!(3_000_000_000_i64);
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::Int64(3_000_000_000)));
+    }
+
+    // ─── round-trip: Int64 / Double ───
+
+    #[test]
+    fn roundtrip_int64() {
+        let bson_val = bson::Bson::Int64(2333);
+
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$numberLong": "2333"}));
+
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::Int64(2333)));
+    }
+
+    #[test]
+    fn roundtrip_int32() {
+        let bson_val = bson::Bson::Int32(42);
+
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!(42));
+
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::Int32(42)));
+    }
+
+    #[test]
+    fn roundtrip_double() {
+        let bson_val = bson::Bson::Double(3.14);
+
+        let json = bson_to_json_value(&bson_val);
+        let back = json_value_to_bson(&json);
+        if let bson::Bson::Double(f) = back {
+            assert!((f - 3.14).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected Double, got {:?}", back);
+        }
+    }
+
+    // ─── save pipeline: Long / NumberDecimal ───
+
+    #[test]
+    fn save_pipeline_number_long() {
+        let input = r#"{"count": NumberLong('2333')}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("count"), Some(bson::Bson::Int64(2333))));
+    }
+
+    #[test]
+    fn save_pipeline_long() {
+        let input = r#"{"count": Long('9999')}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("count"), Some(bson::Bson::Int64(9999))));
+    }
+
+    // ─── JSON view save round-trip: Int64 ───
+
+    #[test]
+    fn jsonview_save_roundtrip_int64() {
+        let doc = doc! { "count": 2333_i64 };
+
+        let json = bson_doc_to_json(&doc);
+        let json_str = serde_json::to_string(&json).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        let saved_doc = json_to_bson_doc(&parsed).unwrap();
+
+        assert!(matches!(saved_doc.get("count"), Some(bson::Bson::Int64(2333))));
+    }
+
+    // ─── split_top_level_args ───
+
+    #[test]
+    fn split_args_simple() {
+        let parts = split_top_level_args(r#"{a: 1}, {$set: {b: 2}}"#);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "{a: 1}");
+        assert_eq!(parts[1], "{$set: {b: 2}}");
+    }
+
+    #[test]
+    fn split_args_nested_objectid() {
+        let input = r#"{"_id": {"$oid":"507f1f77bcf86cd799439011"}}, {"$set": {"a": 1}}"#;
+        let parts = split_top_level_args(input);
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("$oid"));
+        assert!(parts[1].contains("$set"));
+    }
+
+    #[test]
+    fn split_args_single() {
+        let parts = split_top_level_args(r#"{name: "test"}"#);
+        assert_eq!(parts.len(), 1);
+    }
+
+    // ─── parse_query_string ───
+
+    // ─── parse_query_string: all methods ───
+
+    #[test]
+    fn parse_find() {
+        let parsed = parse_query_string(r#"db.users.find({age: 25})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert!(parsed.args.contains("age"));
+    }
+
+    #[test]
+    fn parse_find_empty() {
+        let parsed = parse_query_string("db.users.find({})").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.args, "{}");
+    }
+
+    #[test]
+    fn parse_find_no_args() {
+        let parsed = parse_query_string("db.users.find()").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert!(parsed.args.is_empty());
+    }
+
+    #[test]
+    fn parse_find_with_projection() {
+        let parsed = parse_query_string(r#"db.users.find({}, {name: 1})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+    }
+
+    #[test]
+    fn parse_find_with_sort() {
+        let parsed = parse_query_string(r#"db.users.find({}).sort({age: -1})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.sort.as_deref(), Some("{age: -1}"));
+    }
+
+    #[test]
+    fn parse_find_with_limit() {
+        let parsed = parse_query_string("db.users.find({}).limit(10)").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.limit, Some(10));
+    }
+
+    #[test]
+    fn parse_find_with_sort_and_limit() {
+        let parsed = parse_query_string(r#"db.users.find({}).sort({age: 1}).limit(5)"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.sort.as_deref(), Some("{age: 1}"));
+        assert_eq!(parsed.limit, Some(5));
+    }
+
+    #[test]
+    fn parse_find_with_chained_projection() {
+        let parsed = parse_query_string(r#"db.users.find({}).projection({name: 1})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.projection.as_deref(), Some("{name: 1}"));
+    }
+
+    #[test]
+    fn parse_find_with_objectid() {
+        let query = r#"db.users.find({_id: {"$oid":"507f1f77bcf86cd799439011"}})"#;
+        let parsed = parse_query_string(query).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert!(parsed.args.contains("$oid"));
+    }
+
+    #[test]
+    fn parse_find_one() {
+        let parsed = parse_query_string(r#"db.users.findOne({name: "alice"})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::FindOne));
+    }
+
+    #[test]
+    fn parse_aggregate() {
+        let parsed = parse_query_string(r#"db.orders.aggregate([{$match: {status: "A"}}, {$group: {_id: "$item"}}])"#).unwrap();
+        assert_eq!(parsed.collection, "orders");
+        assert!(matches!(parsed.query_type, QueryType::Aggregate));
+        assert!(parsed.args.contains("$match"));
+        assert!(parsed.args.contains("$group"));
+    }
+
+    #[test]
+    fn parse_aggregate_empty() {
+        let parsed = parse_query_string("db.orders.aggregate([])").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Aggregate));
+    }
+
+    #[test]
+    fn parse_count() {
+        let parsed = parse_query_string(r#"db.users.count({active: true})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::Count));
+    }
+
+    #[test]
+    fn parse_count_empty() {
+        let parsed = parse_query_string("db.users.count({})").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Count));
+    }
+
+    #[test]
+    fn parse_distinct() {
+        let parsed = parse_query_string(r#"db.users.distinct("city")"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::Distinct));
+    }
+
+    #[test]
+    fn parse_insert_one() {
+        let parsed = parse_query_string(r#"db.users.insertOne({name: "bob", age: 30})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::InsertOne));
+        assert!(parsed.args.contains("bob"));
+    }
+
+    #[test]
+    fn parse_insert_many() {
+        let parsed = parse_query_string(r#"db.users.insertMany([{name: "a"}, {name: "b"}])"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::InsertMany));
+        assert!(parsed.args.starts_with('['));
+    }
+
+    #[test]
+    fn parse_update_one() {
+        let parsed = parse_query_string(r#"db.users.updateOne({name: "a"}, {$set: {age: 1}})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::UpdateOne));
+    }
+
+    #[test]
+    fn parse_update_many() {
+        let parsed = parse_query_string(r#"db.users.updateMany({active: false}, {$set: {archived: true}})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::UpdateMany));
+    }
+
+    #[test]
+    fn parse_replace_one() {
+        let parsed = parse_query_string(r#"db.users.replaceOne({name: "a"}, {name: "b", age: 25})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::ReplaceOne));
+    }
+
+    #[test]
+    fn parse_delete_one() {
+        let parsed = parse_query_string(r#"db.users.deleteOne({name: "a"})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::DeleteOne));
+    }
+
+    #[test]
+    fn parse_delete_many() {
+        let parsed = parse_query_string(r#"db.users.deleteMany({active: false})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::DeleteMany));
+    }
+
+    #[test]
+    fn parse_find_one_and_update() {
+        let parsed = parse_query_string(r#"db.users.findOneAndUpdate({name: "a"}, {$set: {age: 99}})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::FindOneAndUpdate));
+    }
+
+    #[test]
+    fn parse_find_one_and_delete() {
+        let parsed = parse_query_string(r#"db.users.findOneAndDelete({name: "a"})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::FindOneAndDelete));
+    }
+
+    #[test]
+    fn parse_find_one_and_replace() {
+        let parsed = parse_query_string(r#"db.users.findOneAndReplace({name: "a"}, {name: "b"})"#).unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::FindOneAndReplace));
+    }
+
+    #[test]
+    fn parse_unsupported_method() {
+        let parsed = parse_query_string("db.users.drop()").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Other));
+    }
+
+    // ─── parse edge cases ───
+
+    #[test]
+    fn parse_trailing_semicolon() {
+        let parsed = parse_query_string("db.users.find({});").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+    }
+
+    #[test]
+    fn parse_whitespace() {
+        let parsed = parse_query_string("  db.users.find({})  ").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.collection, "users");
+    }
+
+    #[test]
+    fn parse_collection_name() {
+        let parsed = parse_query_string("db.invoices.find({})").unwrap();
+        assert_eq!(parsed.collection, "invoices");
+        assert!(matches!(parsed.query_type, QueryType::Find));
+    }
+
+    #[test]
+    fn parse_nested_objects_in_args() {
+        let parsed = parse_query_string(r#"db.users.find({address: {city: "NYC", zip: {$gt: 10000}}})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert!(parsed.args.contains("address"));
+    }
+
+    #[test]
+    fn parse_multiline_query() {
+        let query = "db.invoices.updateOne({\n  _id: {\"$oid\":\"abc\"}\n}, {\n  $set: {\n    a: 1\n  }\n})";
+        let parsed = parse_query_string(query).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::UpdateOne));
+        assert_eq!(parsed.collection, "invoices");
+    }
+
+    #[test]
+    fn parse_no_db_prefix_errors() {
+        let result = parse_query_string("users.find({})");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_no_method_errors() {
+        let result = parse_query_string("db.users");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_no_parens_errors() {
+        let result = parse_query_string("db.users.find");
+        assert!(result.is_err());
+    }
 }

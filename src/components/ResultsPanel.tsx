@@ -71,12 +71,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
       },
     }));
 
-    const effectiveMode =
-      view.mode === "detail"
-        ? "detail"
-        : result?.query_type === "Aggregate"
-          ? "json"
-          : view.mode;
+    const effectiveMode = view.mode;
 
     useEffect(() => {
       if (view.mode === "detail" && focused) {
@@ -93,6 +88,11 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
     }, []);
 
     const handleDetailSave = useCallback((text: string) => {
+      if (result?.query_type === "Aggregate") {
+        setSaveError("Cannot save for aggregated results");
+        setTimeout(() => setSaveError(null), 3000);
+        return;
+      }
       try {
         JSON.parse(text);
       } catch {
@@ -100,7 +100,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
         return;
       }
       setConfirmSave(text);
-    }, []);
+    }, [result]);
 
     const handleConfirmSave = useCallback(async () => {
       if (!confirmSave || !db) return;
@@ -128,26 +128,33 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
       setConfirmSave(null);
     }, []);
 
+    const focusedRef = useRef(focused);
+    focusedRef.current = focused;
+    const viewRef = useRef(view);
+    viewRef.current = view;
+    const confirmSaveRef = useRef(confirmSave);
+    confirmSaveRef.current = confirmSave;
+
     // Escape / Ctrl+[ from detail mode
     useEffect(() => {
-      if (!focused) return;
       const handler = (e: KeyboardEvent) => {
+        if (!focusedRef.current) return;
         const isEscLike =
           e.key === "Escape" || (e.ctrlKey && e.key === "[");
 
-        if (isEscLike && confirmSave) {
+        if (isEscLike && confirmSaveRef.current) {
           e.preventDefault();
           handleCancelSave();
           return;
         }
-        if (isEscLike && view.mode === "detail") {
+        if (isEscLike && viewRef.current.mode === "detail") {
           e.preventDefault();
           handleDetailBack();
         }
       };
       window.addEventListener("keydown", handler);
       return () => window.removeEventListener("keydown", handler);
-    }, [focused, view.mode, confirmSave, handleDetailBack, handleCancelSave]);
+    }, [handleDetailBack, handleCancelSave]);
 
     return (
       <div
@@ -166,9 +173,9 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
             </span>
             {result && effectiveMode !== "detail" && (
               <span className="text-xs text-[var(--text-secondary)]">
-                {result.query_type === "Find"
+                {result.query_type === "Find" || result.query_type === "Aggregate"
                   ? `${result.total_count} docs | p${result.page}`
-                  : `${result.documents.length} docs (aggregate)`}
+                  : `${result.documents.length} docs`}
               </span>
             )}
             {effectiveMode === "detail" && (
@@ -213,8 +220,9 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
         {/* Content */}
         <div className="flex-1 overflow-hidden">
           {loading && (
-            <div className="flex items-center justify-center h-full text-[var(--accent)]">
-              Running query...
+            <div className="flex items-center justify-center h-full text-[var(--accent)] gap-3">
+              <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+              <span>Running query...</span>
             </div>
           )}
           {error && (

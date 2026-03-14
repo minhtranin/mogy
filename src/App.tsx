@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Editor, { type EditorHandle } from "./components/Editor";
 import ResultsPanel, {
@@ -8,6 +8,7 @@ import StatusBar from "./components/StatusBar";
 import ConnectionModal from "./components/ConnectionModal";
 import ListModal from "./components/ListModal";
 import KeymapModal from "./components/KeymapModal";
+import CommandPalette, { type CommandItem } from "./components/CommandPalette";
 import { useMongoConnection } from "./hooks/useMongoConnection";
 import { useQueryExecution } from "./hooks/useQueryExecution";
 import { usePanelFocus } from "./hooks/usePanelFocus";
@@ -46,6 +47,7 @@ export default function App() {
   const [showKeymap, setShowKeymap] = useState(false);
   const [showSaveFile, setShowSaveFile] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [newFileName, setNewFileName] = useState("");
   const [queryFiles, setQueryFiles] = useState<string[]>([]);
   const [saveFileName, setSaveFileName] = useState("mogyquery.mongodb.js");
@@ -73,6 +75,19 @@ export default function App() {
   isDirtyRef.current = isDirty;
   const bindingsRef = useRef(bindings);
   bindingsRef.current = bindings;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const [leaderVisible, setLeaderVisible] = useState(false);
+
+  // Show window (hidden on start to avoid white flash) and remove splash
+  useEffect(() => {
+    getCurrentWindow().show();
+    const splash = document.getElementById("splash");
+    if (splash) {
+      splash.style.opacity = "0";
+      setTimeout(() => splash.remove(), 300);
+    }
+  }, []);
 
   // Load keybindings from settings on mount
   useEffect(() => {
@@ -132,17 +147,17 @@ export default function App() {
   }, []);
 
   const doFocusEditor = useCallback(() => {
-    if (layout === "results-max") setLayout("editor-max");
+    if (layoutRef.current === "results-max") setLayout("editor-max");
     focusEditor();
     editorRef.current?.focus();
-  }, [focusEditor, layout, setLayout]);
+  }, [focusEditor, setLayout]);
 
   const doFocusResults = useCallback(() => {
-    if (layout === "editor-max") setLayout("results-max");
+    if (layoutRef.current === "editor-max") setLayout("results-max");
     focusResults();
     editorRef.current?.blur();
     resultsPanelRef.current?.container?.focus();
-  }, [focusResults, layout, setLayout]);
+  }, [focusResults, setLayout]);
 
   const closeModalAndFocus = useCallback(
     (setter: (v: boolean) => void) => {
@@ -183,6 +198,113 @@ export default function App() {
     }
   }, []);
 
+  const openCommandPalette = useCallback(() => {
+    setShowCommandPalette(true);
+  }, []);
+
+  // Stable modal close callbacks (Changeset 4)
+  const closeConnections = useCallback(() => closeModalAndFocus(setShowConnections), [closeModalAndFocus]);
+  const closeDatabases = useCallback(() => closeModalAndFocus(setShowDatabases), [closeModalAndFocus]);
+  const closeCollections = useCallback(() => closeModalAndFocus(setShowCollections), [closeModalAndFocus]);
+  const closeQueryFiles = useCallback(() => closeModalAndFocus(setShowQueryFiles), [closeModalAndFocus]);
+  const closeKeymap = useCallback(() => closeModalAndFocus(setShowKeymap), [closeModalAndFocus]);
+  const closeCommandPalette = useCallback(() => closeModalAndFocus(setShowCommandPalette), [closeModalAndFocus]);
+  const closeSaveFile = useCallback(() => closeModalAndFocus(setShowSaveFile), [closeModalAndFocus]);
+  const closeNewFile = useCallback(() => closeModalAndFocus(setShowNewFile), [closeModalAndFocus]);
+
+  const handleSelectDatabase = useCallback((db: string) => {
+    mongoRef.current.selectDatabase(db);
+    closeModalAndFocus(setShowDatabases);
+  }, [closeModalAndFocus]);
+
+  const handleSelectCollection = useCallback((col: string) => {
+    mongoRef.current.selectCollection(col);
+    editorRef.current?.appendText(`db.${col}.find({})\n`);
+    closeModalAndFocus(setShowCollections);
+  }, [closeModalAndFocus]);
+
+  const commandPaletteItems: CommandItem[] = useMemo(() => [
+    {
+      id: "add-connection",
+      label: "Add Connection",
+      hint: "^Space a",
+      action: () => {
+        setShowCommandPalette(false);
+        mongoRef.current.refreshConnections();
+        setShowConnections(true);
+      },
+    },
+    {
+      id: "list-databases",
+      label: "List Databases",
+      hint: "^Space d",
+      action: () => {
+        setShowCommandPalette(false);
+        setShowDatabases(true);
+      },
+    },
+    {
+      id: "list-collections",
+      label: "List Collections",
+      hint: "^Space o",
+      action: () => {
+        setShowCommandPalette(false);
+        mongoRef.current.refreshCollections();
+        setShowCollections(true);
+      },
+    },
+    {
+      id: "load-query-file",
+      label: "Load Query File",
+      hint: "^Space l",
+      action: () => {
+        setShowCommandPalette(false);
+        listQueryFiles()
+          .then(setQueryFiles)
+          .catch(() => setQueryFiles([]));
+        setShowQueryFiles(true);
+      },
+    },
+    {
+      id: "new-query-file",
+      label: "New Query File",
+      hint: "^Space c",
+      action: () => {
+        setShowCommandPalette(false);
+        setNewFileName("");
+        setShowNewFile(true);
+      },
+    },
+    {
+      id: "run-query",
+      label: "Run Query",
+      hint: "^Enter",
+      action: () => {
+        setShowCommandPalette(false);
+        const text = editorRef.current?.getQueryText() ?? "";
+        if (text.trim()) handleRunQueryRef.current(text);
+      },
+    },
+    {
+      id: "toggle-maximize",
+      label: "Toggle Maximize",
+      hint: "^Space m",
+      action: () => {
+        setShowCommandPalette(false);
+        toggleMaximizeRef.current();
+      },
+    },
+    {
+      id: "show-keybindings",
+      label: "Show Keybindings",
+      hint: "?",
+      action: () => {
+        setShowCommandPalette(false);
+        setShowKeymap(true);
+      },
+    },
+  ], []);
+
   // Stable refs for capture handler
   const handleRunQueryRef = useRef(handleRunQuery);
   handleRunQueryRef.current = handleRunQuery;
@@ -205,6 +327,13 @@ export default function App() {
         return;
       }
 
+      // Prevent browser/system shortcuts that interfere with app
+      if (e.ctrlKey && e.key === ";") {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
       const kb = bindingsRef.current;
 
       // Run query
@@ -219,7 +348,7 @@ export default function App() {
       // Next page
       if (matchesBinding(e, kb.nextPage)) {
         const r = queryRef.current.result;
-        if (r && r.query_type === "Find") {
+        if (r && (r.query_type === "Find" || r.query_type === "Aggregate")) {
           const totalPages = Math.ceil(r.total_count / r.page_size);
           if (r.page < totalPages) {
             e.preventDefault();
@@ -233,7 +362,7 @@ export default function App() {
       // Prev page
       if (matchesBinding(e, kb.prevPage)) {
         const r = queryRef.current.result;
-        if (r && r.query_type === "Find" && r.page > 1) {
+        if (r && (r.query_type === "Find" || r.query_type === "Aggregate") && r.page > 1) {
           e.preventDefault();
           e.stopPropagation();
           handlePageChangeRef.current(r.page - 1);
@@ -244,7 +373,7 @@ export default function App() {
       // Last page
       if (matchesBinding(e, kb.lastPage)) {
         const r = queryRef.current.result;
-        if (r && r.query_type === "Find") {
+        if (r && (r.query_type === "Find" || r.query_type === "Aggregate")) {
           const totalPages = Math.ceil(r.total_count / r.page_size);
           if (r.page < totalPages) {
             e.preventDefault();
@@ -258,7 +387,7 @@ export default function App() {
       // First page
       if (matchesBinding(e, kb.firstPage)) {
         const r = queryRef.current.result;
-        if (r && r.query_type === "Find" && r.page > 1) {
+        if (r && (r.query_type === "Find" || r.query_type === "Aggregate") && r.page > 1) {
           e.preventDefault();
           e.stopPropagation();
           handlePageChangeRef.current(1);
@@ -317,9 +446,11 @@ export default function App() {
         e.preventDefault();
         e.stopPropagation();
         leaderActive.current = true;
+        setLeaderVisible(true);
         clearTimeout(leaderTimeout.current);
         leaderTimeout.current = setTimeout(() => {
           leaderActive.current = false;
+          setLeaderVisible(false);
         }, 1000);
         return;
       }
@@ -328,6 +459,7 @@ export default function App() {
       if (leaderActive.current) {
         leaderActive.current = false;
         clearTimeout(leaderTimeout.current);
+        setLeaderVisible(false);
 
         if (matchesLeaderKey(e, kb["leader.connections"])) {
           e.preventDefault();
@@ -359,6 +491,14 @@ export default function App() {
           e.stopPropagation();
           setNewFileName("");
           setShowNewFile(true);
+        } else if (matchesLeaderKey(e, kb["leader.commandPalette"])) {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowCommandPalette(true);
+        } else if (matchesLeaderKey(e, kb["leader.fullscreen"])) {
+          e.preventDefault();
+          e.stopPropagation();
+          getCurrentWindow().toggleMaximize();
         }
       }
     };
@@ -419,6 +559,12 @@ export default function App() {
       getCurrentWindow().close();
     });
   }, []);
+
+  // :wqa handler — save and quit
+  const handleSaveAndQuit = useCallback(() => {
+    handleEditorSave();
+    handleAppClose();
+  }, [handleEditorSave, handleAppClose]);
 
   // Save query file handler (from save popup)
   const handleSaveQueryFile = useCallback(async () => {
@@ -487,7 +633,9 @@ export default function App() {
         layout={layout}
         currentFile={currentFile}
         isDirty={isDirty}
+        leaderVisible={leaderVisible}
         onClose={handleAppClose}
+        onCommandPalette={openCommandPalette}
       />
 
       <div className="flex-1 flex flex-col min-h-0">
@@ -497,7 +645,9 @@ export default function App() {
             focused={activePanel === "editor"}
             onFocus={focusEditor}
             onSave={handleEditorSave}
+            onSaveAndQuit={handleSaveAndQuit}
             onChange={handleEditorChange}
+            collections={mongo.collections}
           />
         </div>
 
@@ -522,7 +672,7 @@ export default function App() {
       {/* Modals */}
       <ConnectionModal
         isOpen={showConnections}
-        onClose={() => closeModalAndFocus(setShowConnections)}
+        onClose={closeConnections}
         connections={mongo.connections}
         activeConnection={mongo.activeConnection}
         onConnect={mongo.connect}
@@ -532,32 +682,25 @@ export default function App() {
 
       <ListModal
         isOpen={showDatabases}
-        onClose={() => closeModalAndFocus(setShowDatabases)}
+        onClose={closeDatabases}
         title="Databases"
         items={mongo.databases}
-        onSelect={(db) => {
-          mongo.selectDatabase(db);
-          closeModalAndFocus(setShowDatabases);
-        }}
+        onSelect={handleSelectDatabase}
         selectedItem={mongo.selectedDb}
       />
 
       <ListModal
         isOpen={showCollections}
-        onClose={() => closeModalAndFocus(setShowCollections)}
+        onClose={closeCollections}
         title="Collections"
         items={mongo.collections}
-        onSelect={(col) => {
-          mongo.selectCollection(col);
-          editorRef.current?.appendText(`db.${col}.find({})\n`);
-          closeModalAndFocus(setShowCollections);
-        }}
+        onSelect={handleSelectCollection}
         selectedItem={mongo.selectedCollection}
       />
 
       <ListModal
         isOpen={showQueryFiles}
-        onClose={() => closeModalAndFocus(setShowQueryFiles)}
+        onClose={closeQueryFiles}
         title="Query Files"
         items={queryFiles}
         onSelect={handleLoadQueryFile}
@@ -565,14 +708,20 @@ export default function App() {
 
       <KeymapModal
         isOpen={showKeymap}
-        onClose={() => closeModalAndFocus(setShowKeymap)}
+        onClose={closeKeymap}
+      />
+
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={closeCommandPalette}
+        commands={commandPaletteItems}
       />
 
       {/* Save file modal */}
       {showSaveFile && (
         <div
           className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => closeModalAndFocus(setShowSaveFile)}
+          onClick={closeSaveFile}
         >
           <div
             className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-[450px] p-4 shadow-2xl"
@@ -584,7 +733,7 @@ export default function App() {
               }
               if (e.key === "Escape" || (e.ctrlKey && e.key === "[")) {
                 e.preventDefault();
-                closeModalAndFocus(setShowSaveFile);
+                closeSaveFile();
               }
             }}
           >
@@ -604,7 +753,7 @@ export default function App() {
               </span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => closeModalAndFocus(setShowSaveFile)}
+                  onClick={closeSaveFile}
                   className="px-3 py-1.5 text-xs bg-[var(--bg-surface)] rounded hover:bg-[var(--border)]"
                 >
                   Cancel
@@ -625,7 +774,7 @@ export default function App() {
       {showNewFile && (
         <div
           className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => closeModalAndFocus(setShowNewFile)}
+          onClick={closeNewFile}
         >
           <div
             className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-[450px] p-4 shadow-2xl"
@@ -637,7 +786,7 @@ export default function App() {
               }
               if (e.key === "Escape" || (e.ctrlKey && e.key === "[")) {
                 e.preventDefault();
-                closeModalAndFocus(setShowNewFile);
+                closeNewFile();
               }
             }}
           >
@@ -660,7 +809,7 @@ export default function App() {
               </span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => closeModalAndFocus(setShowNewFile)}
+                  onClick={closeNewFile}
                   className="px-3 py-1.5 text-xs bg-[var(--bg-surface)] rounded hover:bg-[var(--border)]"
                 >
                   Cancel

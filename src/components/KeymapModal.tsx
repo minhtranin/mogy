@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 interface KeymapModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -70,6 +72,7 @@ const sections = [
 ];
 
 export default function KeymapModal({ isOpen, onClose }: KeymapModalProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   if (!isOpen) return null;
 
   return (
@@ -85,13 +88,24 @@ export default function KeymapModal({ isOpen, onClose }: KeymapModalProps) {
           e.preventDefault();
           onClose();
         }
+        if (e.key === "j") {
+          e.preventDefault();
+          scrollRef.current?.scrollBy({ top: 60 });
+        }
+        if (e.key === "k") {
+          e.preventDefault();
+          scrollRef.current?.scrollBy({ top: -60 });
+        }
       }}
     >
       <div
         className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-[550px] max-h-[80vh] shadow-2xl overflow-auto"
         onClick={(e) => e.stopPropagation()}
         tabIndex={0}
-        ref={(el) => el?.focus()}
+        ref={(el) => {
+          (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          el?.focus();
+        }}
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
           <span className="text-sm text-[var(--accent)] font-medium">

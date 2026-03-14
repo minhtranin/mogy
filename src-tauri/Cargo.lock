@@ -2251,6 +2251,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "json5",
+ "libc",
  "log",
  "mongodb",
  "serde",

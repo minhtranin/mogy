@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   type ConnectionConfig,
   listConnections,
@@ -188,7 +188,7 @@ export function useMongoConnection() {
     restore();
   }, [refreshConnections]);
 
-  return {
+  return useMemo(() => ({
     connections,
     activeConnection,
     databases,
@@ -206,5 +206,23 @@ export function useMongoConnection() {
     selectDatabase,
     selectCollection,
     setError,
-  };
+  }), [
+    connections,
+    activeConnection,
+    databases,
+    collections,
+    selectedDb,
+    selectedCollection,
+    error,
+    loading,
+    refreshConnections,
+    refreshCollections,
+    addConnection,
+    removeConnection,
+    connect,
+    disconnect,
+    selectDatabase,
+    selectCollection,
+    setError,
+  ]);
 }

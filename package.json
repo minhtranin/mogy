@@ -3,7 +3,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite",
+    "dev": "bash -c 'trap \"exit 0\" SIGTERM; vite & wait'",
     "build": "vite build",
     "tauri": "cargo tauri"
   },
@@ -21,6 +21,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.1",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/state": "^6.6.0",
