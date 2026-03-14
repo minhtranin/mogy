@@ -11,6 +11,8 @@ pub struct Session {
     pub last_editor_content: Option<String>,
     #[serde(default)]
     pub current_file: Option<String>,
+    #[serde(default)]
+    pub layout_direction: Option<String>,
 }
 
 fn session_path() -> PathBuf {

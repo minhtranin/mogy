@@ -1,14 +1,16 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Editor, { type EditorHandle } from "./components/Editor";
 import ResultsPanel, {
   type ResultsPanelHandle,
 } from "./components/ResultsPanel";
 import StatusBar from "./components/StatusBar";
-import ConnectionModal from "./components/ConnectionModal";
-import ListModal from "./components/ListModal";
-import KeymapModal from "./components/KeymapModal";
-import CommandPalette, { type CommandItem } from "./components/CommandPalette";
+import type { CommandItem } from "./components/CommandPalette";
+
+const ConnectionModal = lazy(() => import("./components/ConnectionModal"));
+const ListModal = lazy(() => import("./components/ListModal"));
+const KeymapModal = lazy(() => import("./components/KeymapModal"));
+const CommandPalette = lazy(() => import("./components/CommandPalette"));
 import { useMongoConnection } from "./hooks/useMongoConnection";
 import { useQueryExecution } from "./hooks/useQueryExecution";
 import { usePanelFocus } from "./hooks/usePanelFocus";
@@ -35,9 +37,12 @@ export default function App() {
     activePanel,
     layout,
     setLayout,
+    layoutDirection,
+    setLayoutDirection,
     focusEditor,
     focusResults,
     toggleMaximize,
+    toggleLayoutDirection,
   } = usePanelFocus();
 
   const [showConnections, setShowConnections] = useState(false);
@@ -77,6 +82,8 @@ export default function App() {
   bindingsRef.current = bindings;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const layoutDirectionRef = useRef(layoutDirection);
+  layoutDirectionRef.current = layoutDirection;
   const [leaderVisible, setLeaderVisible] = useState(false);
 
   // Show window (hidden on start to avoid white flash) and remove splash
@@ -98,6 +105,9 @@ export default function App() {
           if (parsed.keybindings) {
             setBindings(mergeBindings(DEFAULT_BINDINGS, parsed.keybindings));
           }
+          if (parsed.layoutDirection === "horizontal" || parsed.layoutDirection === "vertical") {
+            setLayoutDirection(parsed.layoutDirection);
+          }
         } catch {
           // Invalid settings, use defaults
         }
@@ -112,7 +122,8 @@ export default function App() {
       mongoRef.current.selectedDb,
       mongoRef.current.selectedCollection,
       content,
-      currentFileRef.current
+      currentFileRef.current,
+      layoutDirectionRef.current
     ).catch(() => {});
   }, []);
 
@@ -295,6 +306,18 @@ export default function App() {
       },
     },
     {
+      id: "toggle-layout-direction",
+      label: "Toggle Layout: Vertical / Horizontal",
+      hint: "",
+      action: () => {
+        setShowCommandPalette(false);
+        toggleLayoutDirectionRef.current();
+        setTimeout(() => {
+          doFocusEditorRef.current();
+        }, 100);
+      },
+    },
+    {
       id: "show-keybindings",
       label: "Show Keybindings",
       hint: "?",
@@ -316,6 +339,10 @@ export default function App() {
   doFocusResultsRef.current = doFocusResults;
   const toggleMaximizeRef = useRef(toggleMaximize);
   toggleMaximizeRef.current = toggleMaximize;
+  const toggleLayoutDirectionRef = useRef(toggleLayoutDirection);
+  toggleLayoutDirectionRef.current = toggleLayoutDirection;
+  const closeModalAndFocusRef = useRef(closeModalAndFocus);
+  closeModalAndFocusRef.current = closeModalAndFocus;
   const mongoRef = useRef(mongo);
   mongoRef.current = mongo;
 
@@ -418,7 +445,7 @@ export default function App() {
       }
 
       // Focus editor
-      if (matchesBinding(e, kb.focusEditor)) {
+      if (matchesBinding(e, kb.focusEditor) || matchesBinding(e, kb.focusEditorAlt)) {
         e.preventDefault();
         e.stopPropagation();
         doFocusEditorRef.current();
@@ -426,7 +453,7 @@ export default function App() {
       }
 
       // Focus results
-      if (matchesBinding(e, kb.focusResults)) {
+      if (matchesBinding(e, kb.focusResults) || matchesBinding(e, kb.focusResultsAlt)) {
         e.preventDefault();
         e.stopPropagation();
         doFocusResultsRef.current();
@@ -531,6 +558,9 @@ export default function App() {
           editorRef.current?.setText(session.last_editor_content);
           setIsDirty(false);
         }
+        if (session.layout_direction === "horizontal" || session.layout_direction === "vertical") {
+          setLayoutDirection(session.layout_direction);
+        }
       })
       .catch(() => {});
   }, []);
@@ -552,7 +582,8 @@ export default function App() {
       mongoRef.current.selectedDb,
       mongoRef.current.selectedCollection,
       content,
-      file
+      file,
+      layoutDirectionRef.current
     ).catch(() => {});
 
     Promise.all([fileSave, sessionSave]).then(() => {
@@ -615,13 +646,20 @@ export default function App() {
   );
 
   // Layout classes
+  const isHorizontal = layoutDirection === "horizontal";
   const editorClass =
-    layout === "results-max" ? "h-0 overflow-hidden" : "flex-1 min-h-0";
+    layout === "results-max"
+      ? (isHorizontal ? "w-0 overflow-hidden" : "h-0 overflow-hidden")
+      : "flex-1 min-h-0 min-w-0 overflow-hidden [contain:layout_paint]";
   const resultsClass =
-    layout === "editor-max" ? "h-0 overflow-hidden" : "flex-1 min-h-0";
+    layout === "editor-max"
+      ? (isHorizontal ? "w-0 overflow-hidden" : "h-0 overflow-hidden")
+      : "flex-1 min-h-0 min-w-0 overflow-hidden [contain:layout_paint]";
   const dividerClass =
     layout === "split"
-      ? "h-1 bg-[var(--border)] cursor-row-resize hover:bg-[var(--accent)] transition-colors"
+      ? isHorizontal
+        ? "w-1 bg-[var(--border)] cursor-col-resize hover:bg-[var(--accent)] transition-colors"
+        : "h-1 bg-[var(--border)] cursor-row-resize hover:bg-[var(--accent)] transition-colors"
       : "hidden";
 
   return (
@@ -638,7 +676,7 @@ export default function App() {
         onCommandPalette={openCommandPalette}
       />
 
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className={`flex-1 flex ${isHorizontal ? "flex-row" : "flex-col"} min-h-0`}>
         <div className={editorClass}>
           <Editor
             ref={editorRef}
@@ -670,52 +708,54 @@ export default function App() {
       </div>
 
       {/* Modals */}
-      <ConnectionModal
-        isOpen={showConnections}
-        onClose={closeConnections}
-        connections={mongo.connections}
-        activeConnection={mongo.activeConnection}
-        onConnect={mongo.connect}
-        onAdd={mongo.addConnection}
-        onDelete={mongo.removeConnection}
-      />
+      <Suspense fallback={null}>
+        <ConnectionModal
+          isOpen={showConnections}
+          onClose={closeConnections}
+          connections={mongo.connections}
+          activeConnection={mongo.activeConnection}
+          onConnect={mongo.connect}
+          onAdd={mongo.addConnection}
+          onDelete={mongo.removeConnection}
+        />
 
-      <ListModal
-        isOpen={showDatabases}
-        onClose={closeDatabases}
-        title="Databases"
-        items={mongo.databases}
-        onSelect={handleSelectDatabase}
-        selectedItem={mongo.selectedDb}
-      />
+        <ListModal
+          isOpen={showDatabases}
+          onClose={closeDatabases}
+          title="Databases"
+          items={mongo.databases}
+          onSelect={handleSelectDatabase}
+          selectedItem={mongo.selectedDb}
+        />
 
-      <ListModal
-        isOpen={showCollections}
-        onClose={closeCollections}
-        title="Collections"
-        items={mongo.collections}
-        onSelect={handleSelectCollection}
-        selectedItem={mongo.selectedCollection}
-      />
+        <ListModal
+          isOpen={showCollections}
+          onClose={closeCollections}
+          title="Collections"
+          items={mongo.collections}
+          onSelect={handleSelectCollection}
+          selectedItem={mongo.selectedCollection}
+        />
 
-      <ListModal
-        isOpen={showQueryFiles}
-        onClose={closeQueryFiles}
-        title="Query Files"
-        items={queryFiles}
-        onSelect={handleLoadQueryFile}
-      />
+        <ListModal
+          isOpen={showQueryFiles}
+          onClose={closeQueryFiles}
+          title="Query Files"
+          items={queryFiles}
+          onSelect={handleLoadQueryFile}
+        />
 
-      <KeymapModal
-        isOpen={showKeymap}
-        onClose={closeKeymap}
-      />
+        <KeymapModal
+          isOpen={showKeymap}
+          onClose={closeKeymap}
+        />
 
-      <CommandPalette
-        isOpen={showCommandPalette}
-        onClose={closeCommandPalette}
-        commands={commandPaletteItems}
-      />
+        <CommandPalette
+          isOpen={showCommandPalette}
+          onClose={closeCommandPalette}
+          commands={commandPaletteItems}
+        />
+      </Suspense>
 
       {/* Save file modal */}
       {showSaveFile && (

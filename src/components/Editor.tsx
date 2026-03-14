@@ -114,20 +114,20 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       if (aggregateStageMatch) {
         const incomplete = aggregateStageMatch[1] || "";
         const stages = [
-          { label: "$match", apply: "$match: {\n    \n  }" },
-          { label: "$group", apply: "$group: {\n    _id: \"$field\",\n    count: { $sum: 1 }\n  }" },
-          { label: "$project", apply: "$project: {\n    field: 1\n  }" },
-          { label: "$sort", apply: "$sort: {\n    field: 1\n  }" },
+          { label: "$match", apply: "$match: {\n      \n    }" },
+          { label: "$group", apply: "$group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }" },
+          { label: "$project", apply: "$project: {\n      field: 1\n    }" },
+          { label: "$sort", apply: "$sort: {\n      field: 1\n    }" },
           { label: "$limit", apply: "$limit: 20" },
           { label: "$skip", apply: "$skip: 0" },
           { label: "$unwind", apply: "$unwind: \"$field\"" },
-          { label: "$lookup", apply: "$lookup: {\n      from: \"collection\",\n      localField: \"field\",\n      foreignField: \"_id\",\n      as: \"result\"\n    }" },
-          { label: "$addFields", apply: "$addFields: {\n      newField: \"value\"\n    }" },
+          { label: "$lookup", apply: "$lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n      }" },
+          { label: "$addFields", apply: "$addFields: {\n        newField: \"value\"\n      }" },
           { label: "$count", apply: "$count: \"total\"" },
           { label: "$facet", apply: "$facet: {\n      \n    }" },
-          { label: "$bucket", apply: "$bucket: {\n      groupBy: \"$field\",\n      boundaries: [],\n      default: \"other\"\n    }" },
+          { label: "$bucket", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
           { label: "$out", apply: "$out: \"collection\"" },
-          { label: "$merge", apply: "$merge: {\n    into: \"collection\"\n  }" },
+          { label: "$merge", apply: "$merge: {\n      into: \"collection\"\n    }" },
         ];
         const filterStr = incomplete ? "$" + incomplete.toLowerCase() : "$";
         const filtered = stages.filter(s => s.label.toLowerCase().startsWith(filterStr));
@@ -142,13 +142,15 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const collectionMatch = lineText.match(/db\.(\w*)$/);
       if (collectionMatch) {
         const incomplete = collectionMatch[1] || "";
-        const colls = collectionsRef.current;
+        const filter = incomplete.toLowerCase();
+        const colls = collectionsRef.current
+          .filter((name) => name.toLowerCase().startsWith(filter));
         return {
           from: context.pos - incomplete.length,
-          options: colls.slice(0, 10).map((name) => ({
+          options: colls.map((name) => ({
             label: name,
             type: "property",
-            apply: name + ".",
+            apply: name,
           })),
           validFor: /^\w*$/,
         };
@@ -168,16 +170,16 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
           { label: "deleteOne", type: "function", detail: "(query)", apply: "deleteOne({})" },
           { label: "deleteMany", type: "function", detail: "(query)", apply: "deleteMany({})" },
           { label: "replaceOne", type: "function", detail: "(filter, doc)", apply: "replaceOne({}, {})" },
-          { label: "countDocuments", type: "function", detail: "(query?)", apply: "countDocuments({})" },
-          { label: "aggregate", type: "function", detail: "([pipeline])", apply: "aggregate([\n  {\n    $match: {\n      \n    }\n  }\n])" },
-          { label: "$match", type: "function", detail: "$match", apply: "{\n  $match: {\n    \n  }\n}" },
-          { label: "$group", type: "function", detail: "$group", apply: "{\n  $group: {\n    _id: \"$field\",\n    count: { $sum: 1 }\n  }\n}" },
-          { label: "$project", type: "function", detail: "$project", apply: "{\n  $project: {\n    field: 1\n  }\n}" },
-          { label: "$sort", type: "function", detail: "$sort", apply: "{\n  $sort: {\n    field: 1\n  }\n}" },
+          { label: "count", type: "function", detail: "(query?)", apply: "count({})" },
+          { label: "aggregate", type: "function", detail: "([pipeline])", apply: "aggregate([\n    {\n      $match: {\n        \n      }\n    }\n])" },
+          { label: "$match", type: "function", detail: "$match", apply: "{\n    $match: {\n      \n    }\n}" },
+          { label: "$group", type: "function", detail: "$group", apply: "{\n    $group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }\n}" },
+          { label: "$project", type: "function", detail: "$project", apply: "{\n    $project: {\n      field: 1\n    }\n}" },
+          { label: "$sort", type: "function", detail: "$sort", apply: "{\n    $sort: {\n      field: 1\n    }\n}" },
           { label: "$limit", type: "function", detail: "$limit", apply: "{ $limit: 20 }" },
           { label: "$skip", type: "function", detail: "$skip", apply: "{ $skip: 0 }" },
-          { label: "$unwind", type: "function", detail: "$unwind", apply: "{\n  $unwind: \"$field\"\n}" },
-          { label: "$lookup", type: "function", detail: "$lookup", apply: "{\n  $lookup: {\n      from: \"collection\",\n      localField: \"field\",\n      foreignField: \"_id\",\n      as: \"result\"\n  }\n}" },
+          { label: "$unwind", type: "function", detail: "$unwind", apply: "{\n    $unwind: \"$field\"\n}" },
+          { label: "$lookup", type: "function", detail: "$lookup", apply: "{\n    $lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n    }\n}" },
           { label: "distinct", type: "function", detail: "(field, query?)", apply: "distinct(\"\")" },
           { label: "findOneAndUpdate", type: "function", detail: "(filter, update)", apply: "findOneAndUpdate({}, {$set:{}})" },
           { label: "findOneAndDelete", type: "function", detail: "(query)", apply: "findOneAndDelete({})" },
@@ -260,7 +262,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
   return (
     <div
       ref={containerRef}
-      className={`h-full overflow-auto border ${
+      className={`h-full w-full overflow-hidden border ${
         focused ? "border-[var(--accent)]" : "border-transparent"
       }`}
       onClick={onFocus}

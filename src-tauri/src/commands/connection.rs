@@ -111,6 +111,7 @@ pub async fn save_session_cmd(
     collection: Option<String>,
     last_editor_content: Option<String>,
     current_file: Option<String>,
+    layout_direction: Option<String>,
 ) -> Result<(), String> {
     session::save_session(&Session {
         connection,
@@ -118,5 +119,6 @@ pub async fn save_session_cmd(
         collection,
         last_editor_content,
         current_file,
+        layout_direction,
     })
 }

@@ -1,7 +1,9 @@
 export interface KeyBindingMap {
   runQuery: string;
   focusEditor: string;
+  focusEditorAlt: string;
   focusResults: string;
+  focusResultsAlt: string;
   nextPage: string;
   prevPage: string;
   firstPage: string;
@@ -23,7 +25,9 @@ export interface KeyBindingMap {
 export const DEFAULT_BINDINGS: KeyBindingMap = {
   runQuery: "ctrl+Enter",
   focusEditor: "ctrl+k",
+  focusEditorAlt: "ctrl+h",
   focusResults: "ctrl+j",
+  focusResultsAlt: "ctrl+l",
   nextPage: "ctrl+n",
   prevPage: "ctrl+p",
   firstPage: "ctrl+shift+p",

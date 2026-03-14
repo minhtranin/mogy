@@ -22,34 +22,25 @@ interface ResultTableProps {
 interface TableRowProps {
   row: Row<Record<string, unknown>>;
   idx: number;
-  isSelected: boolean;
-  focused: boolean;
-  onSelect: (idx: number) => void;
-  onExpand: (doc: unknown, idx: number) => void;
-  data: unknown[];
+  isHighlighted: boolean;
   rowRefCallback: (idx: number, el: HTMLTableRowElement | null) => void;
 }
 
 const TableRow = memo(function TableRow({
   row,
   idx,
-  isSelected,
-  focused,
-  onSelect,
-  onExpand,
-  data,
+  isHighlighted,
   rowRefCallback,
 }: TableRowProps) {
   return (
     <tr
       ref={(el) => rowRefCallback(idx, el)}
+      data-idx={idx}
       className={`border-b border-[var(--border)] cursor-pointer ${
-        isSelected && focused
+        isHighlighted
           ? "bg-[var(--bg-surface)] ring-1 ring-[var(--accent)]"
           : "hover:bg-[var(--bg-surface)]"
       }`}
-      onClick={() => onSelect(idx)}
-      onDoubleClick={() => onExpand(data[idx]!, idx)}
     >
       {row.getVisibleCells().map((cell) => (
         <td
@@ -203,8 +194,20 @@ export default function ResultTable({
 
   const totalPages = Math.ceil(totalCount / pageSize);
 
-  const handleSelect = useCallback((idx: number) => {
+  // Event delegation: single handler on tbody for click/dblclick
+  const handleTbodyClick = useCallback((e: React.MouseEvent<HTMLTableSectionElement>) => {
+    const row = (e.target as HTMLElement).closest("tr[data-idx]");
+    if (!row) return;
+    const idx = Number(row.getAttribute("data-idx"));
     setSelectedRow(idx);
+  }, []);
+
+  const handleTbodyDoubleClick = useCallback((e: React.MouseEvent<HTMLTableSectionElement>) => {
+    const row = (e.target as HTMLElement).closest("tr[data-idx]");
+    if (!row) return;
+    const idx = Number(row.getAttribute("data-idx"));
+    const doc = dataRef.current[idx];
+    if (doc) onExpandRowRef.current(doc, idx);
   }, []);
 
   const rowRefCallback = useCallback((idx: number, el: HTMLTableRowElement | null) => {
@@ -244,17 +247,13 @@ export default function ResultTable({
               </tr>
             ))}
           </thead>
-          <tbody>
+          <tbody onClick={handleTbodyClick} onDoubleClick={handleTbodyDoubleClick}>
             {table.getRowModel().rows.map((row, idx) => (
               <TableRow
                 key={row.id}
                 row={row}
                 idx={idx}
-                isSelected={idx === selectedRow}
-                focused={focused}
-                onSelect={handleSelect}
-                onExpand={onExpandRow}
-                data={data}
+                isHighlighted={idx === selectedRow && focused}
                 rowRefCallback={rowRefCallback}
               />
             ))}

@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useState,
   useCallback,
   useRef,
@@ -6,8 +8,9 @@ import {
   useEffect,
   useImperativeHandle,
 } from "react";
-import ResultTable from "./ResultTable";
-import ResultJson from "./ResultJson";
+
+const ResultTable = lazy(() => import("./ResultTable"));
+const ResultJson = lazy(() => import("./ResultJson"));
 import VimJsonEditor, { type VimJsonEditorHandle } from "./VimJsonEditor";
 import type { QueryResult } from "../lib/tauri-commands";
 import { updateDocument, parseCollectionFromQuery } from "../lib/tauri-commands";
@@ -245,20 +248,22 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
                   onQuit={handleDetailBack}
                 />
               )}
-              {effectiveMode === "table" && (
-                <ResultTable
-                  data={result.documents}
-                  page={result.page}
-                  pageSize={result.page_size}
-                  totalCount={result.total_count}
-                  onPageChange={onPageChange}
-                  onExpandRow={handleExpandRow}
-                  focused={focused}
-                />
-              )}
-              {effectiveMode === "json" && (
-                <ResultJson data={result.documents} focused={focused} />
-              )}
+              <Suspense fallback={null}>
+                {effectiveMode === "table" && (
+                  <ResultTable
+                    data={result.documents}
+                    page={result.page}
+                    pageSize={result.page_size}
+                    totalCount={result.total_count}
+                    onPageChange={onPageChange}
+                    onExpandRow={handleExpandRow}
+                    focused={focused}
+                  />
+                )}
+                {effectiveMode === "json" && (
+                  <ResultJson data={result.documents} focused={focused} />
+                )}
+              </Suspense>
             </>
           )}
         </div>

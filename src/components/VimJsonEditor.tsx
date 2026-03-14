@@ -91,7 +91,7 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
     return (
       <div
         ref={containerRef}
-        className="h-full overflow-auto vim-json-editor"
+        className="h-full overflow-hidden vim-json-editor"
       />
     );
   }

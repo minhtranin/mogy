@@ -33,7 +33,6 @@
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "codemirror": "^6.0.2",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-json-view-lite": "^2.5.0"
+    "react-dom": "^19.2.4"
   }
 }

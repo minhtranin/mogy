@@ -10,8 +10,8 @@ const sections = [
     title: "Global",
     keys: [
       ["Ctrl+Enter", "Run query"],
-      ["Ctrl+K", "Focus editor"],
-      ["Ctrl+J", "Focus results"],
+      ["Ctrl+K / Ctrl+H", "Focus editor"],
+      ["Ctrl+J / Ctrl+L", "Focus results"],
       ["Ctrl+N / Ctrl+P", "Next / prev page"],
       ["Ctrl+Shift+N", "Last page"],
       ["Ctrl+Shift+P", "First page"],
@@ -26,6 +26,9 @@ const sections = [
       ["o", "Collections"],
       ["m", "Toggle maximize"],
       ["l", "Load query file"],
+      ["c", "New query file"],
+      ["p", "Command palette"],
+      ["Enter", "Toggle fullscreen"],
     ],
   },
   {
@@ -44,6 +47,7 @@ const sections = [
     keys: [
       ["jk", "Exit insert mode"],
       [":w", "Save query file"],
+      [":wqa", "Save and quit app"],
     ],
   },
   {
