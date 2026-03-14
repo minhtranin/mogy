@@ -7,83 +7,289 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
       background: #1e1e2e;
       color: #cdd6f4;
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
     }
-    .container { max-width: 800px; text-align: center; }
-    h1 { font-size: 3rem; color: #89b4fa; margin-bottom: 0.5rem; }
-    .tagline { font-size: 1.25rem; color: #a6adc8; margin-bottom: 2rem; }
+    a { color: #89b4fa; text-decoration: none; }
+    a:hover { color: #b4befe; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 4rem 2rem 2rem;
+    }
+    .hero h1 { font-size: 3.5rem; color: #89b4fa; letter-spacing: -0.02em; }
+    .hero .tagline { font-size: 1.2rem; color: #a6adc8; margin-top: 0.5rem; }
+    .hero .tech { font-size: 0.8rem; color: #585b70; margin-top: 0.5rem; }
+
+    .screenshot {
+      max-width: min(900px, 90%);
+      border-radius: 8px;
+      margin: 2rem auto;
+      display: block;
+      border: 1px solid #45475a;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+
+    .cta {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      margin: 2rem 0 3rem;
+      flex-wrap: wrap;
+    }
+    .btn {
+      padding: 0.6rem 1.5rem;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      font-family: inherit;
+      display: inline-block;
+    }
+    .btn-primary { background: #89b4fa; color: #1e1e2e; }
+    .btn-primary:hover { background: #b4befe; color: #1e1e2e; }
+    .btn-secondary { background: #313244; color: #cdd6f4; border: 1px solid #45475a; }
+    .btn-secondary:hover { background: #45475a; color: #cdd6f4; }
+
+    /* Sections */
+    .section {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 2rem 3rem;
+    }
+    .section h2 {
+      font-size: 1.5rem;
+      color: #f38ba8;
+      margin-bottom: 1.25rem;
+      border-bottom: 1px solid #313244;
+      padding-bottom: 0.5rem;
+    }
+
+    /* Feature grid */
     .features {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 1rem;
-      margin-bottom: 2rem;
-      text-align: left;
     }
     .feature {
       background: #313244;
-      padding: 1rem;
+      padding: 1.25rem;
       border-radius: 8px;
       border: 1px solid #45475a;
     }
-    .feature h3 { color: #f38ba8; margin-bottom: 0.5rem; font-size: 1rem; }
-    .feature p { font-size: 0.875rem; color: #bac2de; min-height: 2.5em; }
-    .install {
-      background: #89b4fa;
-      color: #1e1e2e;
-      padding: 0.75rem 1.5rem;
-      border-radius: 8px;
-      text-decoration: none;
-      font-weight: 600;
-      display: inline-block;
-      margin: 0.5rem;
+    .feature h3 { color: #f9e2af; margin-bottom: 0.4rem; font-size: 0.95rem; }
+    .feature p { font-size: 0.85rem; color: #bac2de; line-height: 1.5; }
+
+    /* Keybinding table */
+    .keybindings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
     }
-    .install:hover { background: #b4befe; }
-    .github-link { color: #89b4fa; margin-top: 2rem; }
-    .screenshot { max-width: 100%; border-radius: 8px; margin: 2rem 0; border: 1px solid #45475a; }
+    .kb-group h3 {
+      color: #f9e2af;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+    .kb-row {
+      display: flex;
+      align-items: baseline;
+      padding: 0.25rem 0;
+      font-size: 0.85rem;
+    }
+    .kb-key {
+      min-width: 140px;
+      color: #89b4fa;
+      font-size: 0.8rem;
+    }
+    .kb-desc { color: #bac2de; }
+
+    /* Config */
+    pre {
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: 6px;
+      padding: 1.25rem;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #cdd6f4;
+    }
+    .comment { color: #585b70; }
+    .string { color: #a6e3a1; }
+    .key { color: #89b4fa; }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: #585b70;
+      font-size: 0.8rem;
+      border-top: 1px solid #313244;
+    }
+
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 2.5rem; }
+      .keybindings-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <div class="container">
+
+  <!-- Hero -->
+  <div class="hero">
     <h1>Mogy</h1>
     <p class="tagline">A keyboard-driven MongoDB query UI with first-class Vim support</p>
+    <p class="tech">Tauri v2 &middot; React 19 &middot; CodeMirror 6 &middot; Catppuccin Mocha</p>
+  </div>
 
-    <img src="screenshot.png" alt="Mogy Screenshot" class="screenshot">
+  <img src="screenshot.png" alt="Mogy Screenshot" class="screenshot">
 
+  <div class="cta">
+    <a href="https://github.com/minhtranin/mogy/releases/latest" class="btn btn-primary">Download Latest</a>
+    <a href="https://github.com/minhtranin/mogy" class="btn btn-secondary">View on GitHub</a>
+  </div>
+
+  <!-- Features -->
+  <div class="section">
+    <h2>Features</h2>
     <div class="features">
       <div class="feature">
-        <h3>Vim-first</h3>
-        <p>Full vim mode in editor. jk to exit insert mode, :w to save.</p>
+        <h3>Vim-first Editing</h3>
+        <p>Full vim mode via CodeMirror. <code>jk</code> to exit insert, <code>:w</code> to save, <code>:wqa</code> to save and quit the app.</p>
       </div>
       <div class="feature">
         <h3>Keyboard-driven</h3>
-        <p>Navigate everything with j/k/h/l, g/G, and leader key.</p>
+        <p>Navigate everything with <code>j/k</code>, <code>h/l</code>, <code>g/G</code>, and a leader key (<code>Ctrl+Space</code>).</p>
+      </div>
+      <div class="feature">
+        <h3>Autocomplete</h3>
+        <p>Collection names and query methods (<code>.find</code>, <code>.aggregate</code>, <code>.updateMany</code>, ...) suggested as you type.</p>
+      </div>
+      <div class="feature">
+        <h3>Command Palette</h3>
+        <p>Quick fuzzy access to all actions via <code>Ctrl+Space p</code>. Connections, databases, files, layout &mdash; all in one place.</p>
       </div>
       <div class="feature">
         <h3>Query Execution</h3>
-        <p>Run .find(), .aggregate(), .updateMany(), .count() and more.</p>
+        <p>Run <code>.find()</code>, <code>.aggregate()</code>, <code>.updateMany()</code>, <code>.count()</code>, <code>.distinct()</code>, and more with <code>Ctrl+Enter</code>.</p>
       </div>
       <div class="feature">
-        <h3>Session Restore</h3>
-        <p>Remembers last connection, database, collection, and content.</p>
+        <h3>Session Persistence</h3>
+        <p>Remembers your last connection, database, collection, editor content, and layout direction across restarts.</p>
+      </div>
+      <div class="feature">
+        <h3>Connection Manager</h3>
+        <p>Save and switch between multiple MongoDB connections. Databases and collections are listed for quick selection.</p>
+      </div>
+      <div class="feature">
+        <h3>Query Files</h3>
+        <p>Save queries as <code>.mongodb.js</code> files. Load, create, and switch between them. Content persists per file.</p>
       </div>
     </div>
-
-    <div>
-      <a href="https://github.com/minhtranin/mogy/releases/latest" class="install">Download Latest</a>
-      <a href="https://github.com/minhtranin/mogy" class="install">View on GitHub</a>
-    </div>
-
-    <p class="github-link">
-      <a href="https://github.com/minhtranin/mogy" style="color: #89b4fa;">github.com/minhtranin/mogy</a>
-    </p>
   </div>
+
+  <!-- Keybindings -->
+  <div class="section">
+    <h2>Keybindings</h2>
+    <div class="keybindings-grid">
+      <div class="kb-group">
+        <h3>Global</h3>
+        <div class="kb-row"><span class="kb-key">Ctrl+Enter</span><span class="kb-desc">Run query</span></div>
+        <div class="kb-row"><span class="kb-key">Ctrl+K / Ctrl+H</span><span class="kb-desc">Focus editor</span></div>
+        <div class="kb-row"><span class="kb-key">Ctrl+J / Ctrl+L</span><span class="kb-desc">Focus results</span></div>
+        <div class="kb-row"><span class="kb-key">Ctrl+N / Ctrl+P</span><span class="kb-desc">Next / prev page</span></div>
+        <div class="kb-row"><span class="kb-key">Ctrl+Shift+N</span><span class="kb-desc">Last page</span></div>
+        <div class="kb-row"><span class="kb-key">Ctrl+Shift+P</span><span class="kb-desc">First page</span></div>
+        <div class="kb-row"><span class="kb-key">?</span><span class="kb-desc">Show keybindings</span></div>
+      </div>
+      <div class="kb-group">
+        <h3>Leader (Ctrl+Space, then...)</h3>
+        <div class="kb-row"><span class="kb-key">a</span><span class="kb-desc">Open connections</span></div>
+        <div class="kb-row"><span class="kb-key">d</span><span class="kb-desc">Open databases</span></div>
+        <div class="kb-row"><span class="kb-key">o</span><span class="kb-desc">Open collections</span></div>
+        <div class="kb-row"><span class="kb-key">m</span><span class="kb-desc">Toggle maximize</span></div>
+        <div class="kb-row"><span class="kb-key">l</span><span class="kb-desc">Load query file</span></div>
+        <div class="kb-row"><span class="kb-key">c</span><span class="kb-desc">New query file</span></div>
+        <div class="kb-row"><span class="kb-key">p</span><span class="kb-desc">Command palette</span></div>
+        <div class="kb-row"><span class="kb-key">Enter</span><span class="kb-desc">Toggle fullscreen</span></div>
+      </div>
+      <div class="kb-group">
+        <h3>Results Panel</h3>
+        <div class="kb-row"><span class="kb-key">Shift+H / Shift+L</span><span class="kb-desc">Table / JSON view</span></div>
+        <div class="kb-row"><span class="kb-key">j / k</span><span class="kb-desc">Navigate rows</span></div>
+        <div class="kb-row"><span class="kb-key">h / l</span><span class="kb-desc">Scroll horizontal</span></div>
+        <div class="kb-row"><span class="kb-key">g / G</span><span class="kb-desc">First / last row</span></div>
+        <div class="kb-row"><span class="kb-key">Enter</span><span class="kb-desc">Expand row detail</span></div>
+      </div>
+      <div class="kb-group">
+        <h3>Vim Editor</h3>
+        <div class="kb-row"><span class="kb-key">jk</span><span class="kb-desc">Exit insert mode</span></div>
+        <div class="kb-row"><span class="kb-key">:w</span><span class="kb-desc">Save query file</span></div>
+        <div class="kb-row"><span class="kb-key">:q</span><span class="kb-desc">Close detail view</span></div>
+        <div class="kb-row"><span class="kb-key">:wqa</span><span class="kb-desc">Save and quit app</span></div>
+      </div>
+    </div>
+    <p style="margin-top: 1rem; font-size: 0.8rem; color: #585b70;">All keybindings are overridable via settings file.</p>
+  </div>
+
+  <!-- Configuration -->
+  <div class="section">
+    <h2>Configuration</h2>
+    <p style="font-size: 0.9rem; color: #bac2de; margin-bottom: 1rem;">
+      Create <code style="color: #a6e3a1;">~/.config/mogy/settings.json</code> to override defaults. Only specify keys you want to change.
+    </p>
+    <pre><code>{
+  <span class="key">"keybindings"</span>: {
+    <span class="key">"runQuery"</span>: <span class="string">"ctrl+Enter"</span>,
+    <span class="key">"focusEditor"</span>: <span class="string">"ctrl+k"</span>,
+    <span class="key">"focusResults"</span>: <span class="string">"ctrl+j"</span>,
+    <span class="key">"leader"</span>: <span class="string">"ctrl+space"</span>,
+    <span class="key">"leader.commandPalette"</span>: <span class="string">"p"</span>,
+    <span class="key">"leader.connections"</span>: <span class="string">"a"</span>,
+    <span class="key">"leader.databases"</span>: <span class="string">"d"</span>
+  },
+
+  <span class="comment">// "vertical"   &mdash; editor on top, results on bottom</span>
+  <span class="comment">// "horizontal" &mdash; editor on left, results on right</span>
+  <span class="key">"layoutDirection"</span>: <span class="string">"vertical"</span>
+}</code></pre>
+  </div>
+
+  <!-- Tech Stack -->
+  <div class="section">
+    <h2>Tech Stack</h2>
+    <div class="features" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+      <div class="feature">
+        <h3>Frontend</h3>
+        <p>React 19 + TypeScript + Vite</p>
+      </div>
+      <div class="feature">
+        <h3>Backend</h3>
+        <p>Rust + Tauri v2</p>
+      </div>
+      <div class="feature">
+        <h3>Editor</h3>
+        <p>CodeMirror 6 + @replit/codemirror-vim</p>
+      </div>
+      <div class="feature">
+        <h3>Database</h3>
+        <p>MongoDB Rust Driver</p>
+      </div>
+      <div class="feature">
+        <h3>Theme</h3>
+        <p>Tailwind CSS + Catppuccin Mocha</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/minhtranin/mogy">github.com/minhtranin/mogy</a> &middot; MIT License
+  </footer>
+
 </body>
 </html>
