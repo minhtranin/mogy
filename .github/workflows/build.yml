@@ -40,7 +40,9 @@ jobs:
         run: cargo test
 
       - name: Build Tauri app
-        run: bunx tauri build --bundles deb,appimage
+        run: |
+          cargo install tauri-cli --locked
+          cargo tauri build --bundles deb,appimage
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
