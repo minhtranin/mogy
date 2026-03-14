@@ -3,12 +3,11 @@ name: Build
 on:
   push:
     branches: [master, main]
+    tags:
+      - 'v*'
     paths-ignore:
       - 'docs/**'
       - '.github/workflows/pages.yml'
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build:
