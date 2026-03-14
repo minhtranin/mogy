@@ -76,4 +76,29 @@ export function ensureExCommands() {
     }
   });
   Vim.mapCommand("gcc", "action", "toggleCommentLine", {}, {});
+
+  // gsa' in visual mode — wrap with single quotes
+  Vim.defineAction("wrapSingleQuote", (cm: any) => {
+    const sel = cm.listSelections()[0];
+    const text = cm.getSelection();
+    cm.replaceSelection("'" + text + "'");
+    cm.setSelection(
+      { line: sel.anchor.line, ch: sel.anchor.ch + 1 },
+      { line: sel.head.line, ch: sel.head.ch + 1 }
+    );
+  });
+  Vim.mapCommand("gsa'", "operator", "wrapSingleQuote", {}, { context: "visual" });
+
+  // gsa" in visual mode — wrap with double quotes
+  Vim.defineAction("wrapDoubleQuote", (cm: any) => {
+    const sel = cm.listSelections()[0];
+    const text = cm.getSelection();
+    cm.replaceSelection('"' + text + '"');
+    cm.setSelection(
+      { line: sel.anchor.line, ch: sel.anchor.ch + 1 },
+      { line: sel.head.line, ch: sel.head.ch + 1 }
+    );
+  });
+  Vim.mapCommand('gsa"', "operator", "wrapDoubleQuote", {}, { context: "visual" });
+
 }
