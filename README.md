@@ -4,7 +4,9 @@ A keyboard-driven MongoDB query UI with first-class Vim support.
 
 Built with Tauri v2 + React + CodeMirror.
 
-![Mogy](./screenshot.png)
+<p align="center">
+  <img src="./mogy.png" alt="Mogy" width="200" />
+</p>
 
 ## Features
 
@@ -82,10 +84,7 @@ All settings live in `~/.config/mogy/settings.json`. Create the file to override
     "leader.newFile": "c",
     "leader.commandPalette": "p",
     "leader.fullscreen": "Enter"
-  },
-  // "vertical"    — editor on top, results on bottom
-  // "horizontal"  — editor on left, results on right
-  "layoutDirection": "vertical"
+  }
 }
 ```
 
