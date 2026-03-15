@@ -1,8 +1,11 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
-import { EditorView } from "@codemirror/view";
+import { EditorView, lineNumbers, drawSelection, highlightActiveLine } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
+import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { json } from "@codemirror/lang-json";
 import { vim, Vim, getCM } from "@replit/codemirror-vim";
+import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
+import { keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import {
@@ -12,10 +15,22 @@ import {
   ensureExCommands,
 } from "../lib/vim-commands";
 
+// Lightweight extensions for large JSON — no bracket matching, fold gutter,
+// autocomplete, or JSON language parser
+const lightweightSetup = [
+  lineNumbers(),
+  history(),
+  drawSelection(),
+  highlightActiveLine(),
+  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+  keymap.of([...defaultKeymap, ...historyKeymap]),
+];
+
 interface VimJsonEditorProps {
   value: string;
   onSave?: (value: string) => void;
   onQuit?: () => void;
+  lightweight?: boolean;
 }
 
 export interface VimJsonEditorHandle {
@@ -25,7 +40,7 @@ export interface VimJsonEditorHandle {
 }
 
 export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
-  function VimJsonEditor({ value, onSave, onQuit }, ref) {
+  function VimJsonEditor({ value, onSave, onQuit, lightweight = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const initialValueRef = useRef(value);
@@ -58,9 +73,13 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
 
       ensureExCommands();
 
+      const extensions = lightweight
+        ? [vim(), ...lightweightSetup, oneDark]
+        : [vim(), basicSetup, json(), oneDark];
+
       const state = EditorState.create({
         doc: initialValueRef.current,
-        extensions: [vim(), basicSetup, json(), oneDark],
+        extensions,
       });
 
       const view = new EditorView({

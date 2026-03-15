@@ -31,7 +31,7 @@ export default function StatusBar({
       className="flex items-center justify-between px-3 py-2 bg-[var(--bg-secondary)] border-b border-[var(--border)] text-xs select-none"
       style={{ minHeight: "40px" }}
       onMouseDown={(e) => {
-        if ((e.target as HTMLElement).tagName !== "BUTTON") {
+        if (!(e.target as HTMLElement).closest("button")) {
           appWindow.startDragging();
         }
       }}

@@ -28,7 +28,7 @@ export default function ResultJson({ data, focused }: ResultJsonProps) {
 
   return (
     <div className="h-full overflow-hidden">
-      <VimJsonEditor ref={editorRef} value={jsonText} />
+      <VimJsonEditor ref={editorRef} value={jsonText} lightweight />
     </div>
   );
 }

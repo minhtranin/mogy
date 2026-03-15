@@ -121,14 +121,17 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
         setConfirmSave(null);
         setTimeout(() => setSaveSuccess(false), 2000);
         onQueryRefresh();
+        setTimeout(() => detailEditorRef.current?.focus(), 100);
       } catch (e) {
         setSaveError(String(e));
         setConfirmSave(null);
+        setTimeout(() => detailEditorRef.current?.focus(), 100);
       }
     }, [confirmSave, db, lastQueryText, onQueryRefresh]);
 
     const handleCancelSave = useCallback(() => {
       setConfirmSave(null);
+      setTimeout(() => detailEditorRef.current?.focus(), 50);
     }, []);
 
     const focusedRef = useRef(focused);
@@ -195,7 +198,6 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
           </div>
           {effectiveMode !== "detail" && (
             <div className="flex gap-1 text-xs text-[var(--text-muted)]">
-              <span className="mr-2">H table | L json | ^N/^P page</span>
               <button
                 onClick={() => setView({ mode: "table" })}
                 className={`px-2 py-0.5 rounded ${
@@ -246,6 +248,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
                   value={JSON.stringify(view.document, null, 2)}
                   onSave={handleDetailSave}
                   onQuit={handleDetailBack}
+                  lightweight
                 />
               )}
               <Suspense fallback={null}>
