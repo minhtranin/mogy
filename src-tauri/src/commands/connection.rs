@@ -113,6 +113,7 @@ pub async fn save_session_cmd(
     current_file: Option<String>,
     layout_direction: Option<String>,
     color_scheme: Option<String>,
+    lightweight_editor: Option<bool>,
 ) -> Result<(), String> {
     session::save_session(&Session {
         connection,
@@ -122,5 +123,6 @@ pub async fn save_session_cmd(
         current_file,
         layout_direction,
         color_scheme,
+        lightweight_editor,
     })
 }

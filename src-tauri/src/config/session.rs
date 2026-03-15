@@ -15,6 +15,8 @@ pub struct Session {
     pub layout_direction: Option<String>,
     #[serde(default)]
     pub color_scheme: Option<String>,
+    #[serde(default)]
+    pub lightweight_editor: Option<bool>,
 }
 
 fn session_path() -> PathBuf {

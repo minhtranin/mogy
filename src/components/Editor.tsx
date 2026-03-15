@@ -3,13 +3,14 @@ import { EditorView, keymap } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { javascript } from "@codemirror/lang-javascript";
 import { vim, Vim } from "@replit/codemirror-vim";
-import { basicSetup } from "codemirror";
+import { basicSetup, minimalSetup } from "codemirror";
 import { autocompletion, type CompletionContext, completionKeymap } from "@codemirror/autocomplete";
 import { editorSaveRef, saveAndQuitAllRef, ensureExCommands } from "../lib/vim-commands";
 import { getCmTheme, type ThemeName } from "../lib/themes";
 
 interface EditorProps {
   focused: boolean;
+  lightweight: boolean;
   onFocus: () => void;
   onSave?: () => void;
   onChange?: () => void;
@@ -28,12 +29,14 @@ export interface EditorHandle {
 }
 
 export default forwardRef<EditorHandle, EditorProps>(function Editor(
-  { focused, onFocus, onSave, onChange, onSaveAndQuit, collections = [] },
+  { focused, lightweight, onFocus, onSave, onChange, onSaveAndQuit, collections = [] },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
+  const syntaxCompartment = useRef(new Compartment());
+  const lightweightRef = useRef(lightweight);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
   const onChangeRef = useRef(onChange);
@@ -107,6 +110,21 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       saveAndQuitAllRef.current = null;
     };
   }, []);
+
+  // Sync lightweight prop → reconfigure syntax compartment
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || lightweightRef.current === lightweight) return;
+    lightweightRef.current = lightweight;
+    const cursor = view.state.selection.main.head;
+    view.dispatch({
+      effects: syntaxCompartment.current.reconfigure(
+        lightweight ? minimalSetup : [basicSetup, javascript()]
+      ),
+      selection: { anchor: cursor },
+    });
+    requestAnimationFrame(() => view.focus());
+  }, [lightweight]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -223,8 +241,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       doc: "// Ctrl+Enter to run query\n\ndb.collection.find({})\n",
       extensions: [
         vim(),
-        basicSetup,
-        javascript(),
+        syntaxCompartment.current.of(lightweight ? minimalSetup : [basicSetup, javascript()]),
         themeCompartment.current.of(getCmTheme("mocha")),
         autocompletion({ override: [mongoCompletion], defaultKeymap: true, activateOnTyping: true }),
         // Add Ctrl+N/P as additional keys for navigation

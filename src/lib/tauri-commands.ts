@@ -28,6 +28,7 @@ export interface Session {
   current_file: string | null;
   layout_direction: string | null;
   color_scheme: string | null;
+  lightweight_editor: boolean | null;
 }
 
 // Connection commands
@@ -58,8 +59,9 @@ export const saveSession = (
   lastEditorContent?: string | null,
   currentFile?: string | null,
   layoutDirection?: string | null,
-  colorScheme?: string | null
-) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme });
+  colorScheme?: string | null,
+  lightweightEditor?: boolean | null
+) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme, lightweightEditor });
 
 // Metadata
 export const listDatabases = () => invoke<string[]>("list_databases");

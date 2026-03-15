@@ -62,6 +62,8 @@ export default function App() {
   const [bindings, setBindings] = useState<KeyBindingMap>(DEFAULT_BINDINGS);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>("mocha");
   const [showThemePicker, setShowThemePicker] = useState(false);
+  const [lightweightEditor, setLightweightEditor] = useState(false);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
 
   const leaderActive = useRef(false);
   const leaderTimeout = useRef<ReturnType<typeof setTimeout>>();
@@ -89,6 +91,8 @@ export default function App() {
   layoutDirectionRef.current = layoutDirection;
   const currentThemeRef = useRef(currentTheme);
   currentThemeRef.current = currentTheme;
+  const lightweightEditorRef = useRef(lightweightEditor);
+  lightweightEditorRef.current = lightweightEditor;
   const [leaderVisible, setLeaderVisible] = useState(false);
 
   // Remove splash once app is mounted and ready
@@ -133,7 +137,8 @@ export default function App() {
       content,
       currentFileRef.current,
       layoutDirectionRef.current,
-      currentThemeRef.current
+      currentThemeRef.current,
+      lightweightEditorRef.current
     ).catch(() => {});
   }, []);
 
@@ -353,6 +358,15 @@ export default function App() {
         setShowThemePicker(true);
       },
     },
+    {
+      id: "toggle-lightweight",
+      label: "Toggle Lightweight Editor",
+      hint: "",
+      action: () => {
+        setShowCommandPalette(false);
+        setLightweightEditor(prev => !prev);
+      },
+    },
   ], []);
 
   // Stable refs for capture handler
@@ -565,8 +579,14 @@ export default function App() {
           applyCssVariables(session.color_scheme as ThemeName);
           editorRef.current?.setTheme(session.color_scheme as ThemeName);
         }
+        if (session.lightweight_editor) {
+          setLightweightEditor(true);
+        }
+        setSessionLoaded(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        setSessionLoaded(true);
+      });
   }, []);
 
   // Handle app close — save session then close window
@@ -588,7 +608,8 @@ export default function App() {
       content,
       file,
       layoutDirectionRef.current,
-      currentThemeRef.current
+      currentThemeRef.current,
+      lightweightEditorRef.current
     ).catch(() => {});
 
     Promise.all([fileSave, sessionSave]).then(() => {
@@ -683,15 +704,18 @@ export default function App() {
 
       <div className={`flex-1 flex ${isHorizontal ? "flex-row" : "flex-col"} min-h-0`}>
         <div className={editorClass}>
-          <Editor
-            ref={editorRef}
-            focused={activePanel === "editor"}
-            onFocus={focusEditor}
-            onSave={handleEditorSave}
-            onSaveAndQuit={handleSaveAndQuit}
-            onChange={handleEditorChange}
-            collections={mongo.collections}
-          />
+          {sessionLoaded && (
+            <Editor
+              ref={editorRef}
+              focused={activePanel === "editor"}
+              lightweight={lightweightEditor}
+              onFocus={focusEditor}
+              onSave={handleEditorSave}
+              onSaveAndQuit={handleSaveAndQuit}
+              onChange={handleEditorChange}
+              collections={mongo.collections}
+            />
+          )}
         </div>
 
         <div className={dividerClass} />
