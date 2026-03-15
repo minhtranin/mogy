@@ -1,10 +1,13 @@
 import { Vim } from "@replit/codemirror-vim";
 
-// Two-level callback system: detail view (VimJsonEditor) takes priority over main editor
+// Each editor registers its save callback; :w dispatches based on which editor invoked it
 export const editorSaveRef = { current: null as ((text: string) => void) | null };
 export const detailSaveRef = { current: null as ((text: string) => void) | null };
 export const quitCallbackRef = { current: null as (() => void) | null };
 export const saveAndQuitAllRef = { current: null as (() => void) | null };
+
+// Track which CodeMirror instance belongs to the detail view
+export const detailCmRef = { current: null as unknown };
 
 let defined = false;
 
@@ -14,7 +17,7 @@ export function ensureExCommands() {
 
   Vim.defineEx("write", "w", (cm: { getValue: () => string }) => {
     const text = cm.getValue();
-    if (detailSaveRef.current) {
+    if (detailSaveRef.current && cm === detailCmRef.current) {
       detailSaveRef.current(text);
     } else if (editorSaveRef.current) {
       editorSaveRef.current(text);

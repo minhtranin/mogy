@@ -2,11 +2,12 @@ import { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { json } from "@codemirror/lang-json";
-import { vim, Vim } from "@replit/codemirror-vim";
+import { vim, Vim, getCM } from "@replit/codemirror-vim";
 import { basicSetup } from "codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import {
   detailSaveRef,
+  detailCmRef,
   quitCallbackRef,
   ensureExCommands,
 } from "../lib/vim-commands";
@@ -68,10 +69,12 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
       });
 
       viewRef.current = view;
+      detailCmRef.current = getCM(view);
 
       Vim.map("jk", "<Esc>", "insert");
 
       return () => {
+        detailCmRef.current = null;
         view.destroy();
       };
     }, []);
