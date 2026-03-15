@@ -248,7 +248,7 @@ export default function App() {
 
   const handleSelectCollection = useCallback((col: string) => {
     mongoRef.current.selectCollection(col);
-    editorRef.current?.appendText(`db.${col}.find({})\n`);
+    editorRef.current?.insertAtCursor(`db.${col}.find({}).sort({_id: -1})\n`);
     closeModalAndFocus(setShowCollections);
   }, [closeModalAndFocus]);
 

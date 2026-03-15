@@ -23,7 +23,7 @@ export interface EditorHandle {
   getQueryText: () => string;
   getText: () => string;
   setText: (text: string) => void;
-  appendText: (text: string) => void;
+  insertAtCursor: (text: string) => void;
   setTheme: (theme: ThemeName) => void;
 }
 
@@ -73,14 +73,16 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
         changes: { from: 0, to: view.state.doc.length, insert: text },
       });
     },
-    appendText(text: string) {
+    insertAtCursor(text: string) {
       const view = viewRef.current;
       if (!view) return;
-      const doc = view.state.doc;
-      const lastLine = doc.line(doc.lines).text;
-      const prefix = lastLine.trim() ? "\n" : "";
+      const cursor = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(cursor);
+      const prefix = line.text.trim() ? "\n" : "";
+      const insert = prefix + text;
       view.dispatch({
-        changes: { from: doc.length, insert: prefix + text },
+        changes: { from: cursor, insert },
+        selection: { anchor: cursor + insert.length },
       });
     },
     setTheme(theme: ThemeName) {
