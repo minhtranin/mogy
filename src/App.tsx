@@ -22,6 +22,7 @@ import {
   saveSession,
   loadSettings,
 } from "./lib/tauri-commands";
+import { applyCssVariables, THEME_LIST, type ThemeName } from "./lib/themes";
 import {
   DEFAULT_BINDINGS,
   mergeBindings,
@@ -59,6 +60,8 @@ export default function App() {
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [bindings, setBindings] = useState<KeyBindingMap>(DEFAULT_BINDINGS);
+  const [currentTheme, setCurrentTheme] = useState<ThemeName>("mocha");
+  const [showThemePicker, setShowThemePicker] = useState(false);
 
   const leaderActive = useRef(false);
   const leaderTimeout = useRef<ReturnType<typeof setTimeout>>();
@@ -86,9 +89,8 @@ export default function App() {
   layoutDirectionRef.current = layoutDirection;
   const [leaderVisible, setLeaderVisible] = useState(false);
 
-  // Show window (hidden on start to avoid white flash) and remove splash
+  // Remove splash once app is mounted and ready
   useEffect(() => {
-    getCurrentWindow().show();
     const splash = document.getElementById("splash");
     if (splash) {
       splash.style.opacity = "0";
@@ -107,6 +109,11 @@ export default function App() {
           }
           if (parsed.layoutDirection === "horizontal" || parsed.layoutDirection === "vertical") {
             setLayoutDirection(parsed.layoutDirection);
+          }
+          if (parsed.theme === "mocha" || parsed.theme === "latte") {
+            setCurrentTheme(parsed.theme);
+            applyCssVariables(parsed.theme);
+            editorRef.current?.setTheme(parsed.theme);
           }
         } catch {
           // Invalid settings, use defaults
@@ -220,6 +227,14 @@ export default function App() {
   const closeQueryFiles = useCallback(() => closeModalAndFocus(setShowQueryFiles), [closeModalAndFocus]);
   const closeKeymap = useCallback(() => closeModalAndFocus(setShowKeymap), [closeModalAndFocus]);
   const closeCommandPalette = useCallback(() => closeModalAndFocus(setShowCommandPalette), [closeModalAndFocus]);
+  const closeThemePicker = useCallback(() => closeModalAndFocus(setShowThemePicker), [closeModalAndFocus]);
+
+  const switchTheme = useCallback((theme: ThemeName) => {
+    setCurrentTheme(theme);
+    applyCssVariables(theme);
+    editorRef.current?.setTheme(theme);
+    closeModalAndFocus(setShowThemePicker);
+  }, [closeModalAndFocus]);
   const closeSaveFile = useCallback(() => closeModalAndFocus(setShowSaveFile), [closeModalAndFocus]);
   const closeNewFile = useCallback(() => closeModalAndFocus(setShowNewFile), [closeModalAndFocus]);
 
@@ -324,6 +339,15 @@ export default function App() {
       action: () => {
         setShowCommandPalette(false);
         setShowKeymap(true);
+      },
+    },
+    {
+      id: "switch-theme",
+      label: "Switch Color Scheme",
+      hint: "",
+      action: () => {
+        setShowCommandPalette(false);
+        setShowThemePicker(true);
       },
     },
   ], []);
@@ -703,6 +727,7 @@ export default function App() {
             db={mongo.selectedDb}
             lastQueryText={lastQueryText.current}
             onQueryRefresh={handleQueryRefresh}
+            theme={currentTheme}
           />
         </div>
       </div>
@@ -754,6 +779,18 @@ export default function App() {
           isOpen={showCommandPalette}
           onClose={closeCommandPalette}
           commands={commandPaletteItems}
+        />
+
+        <ListModal
+          isOpen={showThemePicker}
+          onClose={closeThemePicker}
+          title="Color Scheme"
+          items={THEME_LIST.map((t) => t.label)}
+          onSelect={(label) => {
+            const t = THEME_LIST.find((x) => x.label === label);
+            if (t) switchTheme(t.id);
+          }}
+          selectedItem={THEME_LIST.find((t) => t.id === currentTheme)?.label}
         />
       </Suspense>
 

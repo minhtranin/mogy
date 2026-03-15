@@ -14,6 +14,7 @@ const ResultJson = lazy(() => import("./ResultJson"));
 import VimJsonEditor, { type VimJsonEditorHandle } from "./VimJsonEditor";
 import type { QueryResult } from "../lib/tauri-commands";
 import { updateDocument, parseCollectionFromQuery } from "../lib/tauri-commands";
+import type { ThemeName } from "../lib/themes";
 
 type ViewState =
   | { mode: "table" }
@@ -30,6 +31,7 @@ interface ResultsPanelProps {
   db: string | null;
   lastQueryText: string;
   onQueryRefresh: () => void;
+  theme?: ThemeName;
 }
 
 export interface ResultsPanelHandle {
@@ -50,6 +52,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
       db,
       lastQueryText,
       onQueryRefresh,
+      theme,
     },
     ref
   ) {
@@ -249,6 +252,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
                   onSave={handleDetailSave}
                   onQuit={handleDetailBack}
                   lightweight
+                  theme={theme}
                 />
               )}
               <Suspense fallback={null}>
@@ -264,7 +268,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
                   />
                 )}
                 {effectiveMode === "json" && (
-                  <ResultJson data={result.documents} focused={focused} />
+                  <ResultJson data={result.documents} focused={focused} theme={theme} />
                 )}
               </Suspense>
             </>

@@ -7,13 +7,13 @@ import { vim, Vim, getCM } from "@replit/codemirror-vim";
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
-import { oneDark } from "@codemirror/theme-one-dark";
 import {
   detailSaveRef,
   detailCmRef,
   quitCallbackRef,
   ensureExCommands,
 } from "../lib/vim-commands";
+import { getCmTheme, type ThemeName } from "../lib/themes";
 
 // Lightweight extensions for large JSON — no bracket matching, fold gutter,
 // autocomplete, or JSON language parser
@@ -31,6 +31,7 @@ interface VimJsonEditorProps {
   onSave?: (value: string) => void;
   onQuit?: () => void;
   lightweight?: boolean;
+  theme?: ThemeName;
 }
 
 export interface VimJsonEditorHandle {
@@ -40,7 +41,7 @@ export interface VimJsonEditorHandle {
 }
 
 export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
-  function VimJsonEditor({ value, onSave, onQuit, lightweight = false }, ref) {
+  function VimJsonEditor({ value, onSave, onQuit, lightweight = false, theme = "mocha" }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const initialValueRef = useRef(value);
@@ -73,9 +74,10 @@ export default forwardRef<VimJsonEditorHandle, VimJsonEditorProps>(
 
       ensureExCommands();
 
+      const cmTheme = getCmTheme(theme);
       const extensions = lightweight
-        ? [vim(), ...lightweightSetup, oneDark]
-        : [vim(), basicSetup, json(), oneDark];
+        ? [vim(), ...lightweightSetup, cmTheme]
+        : [vim(), basicSetup, json(), cmTheme];
 
       const state = EditorState.create({
         doc: initialValueRef.current,

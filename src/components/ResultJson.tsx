@@ -1,12 +1,14 @@
 import { useRef, useEffect, useMemo } from "react";
 import VimJsonEditor, { type VimJsonEditorHandle } from "./VimJsonEditor";
+import type { ThemeName } from "../lib/themes";
 
 interface ResultJsonProps {
   data: unknown[];
   focused: boolean;
+  theme?: ThemeName;
 }
 
-export default function ResultJson({ data, focused }: ResultJsonProps) {
+export default function ResultJson({ data, focused, theme }: ResultJsonProps) {
   const editorRef = useRef<VimJsonEditorHandle>(null);
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export default function ResultJson({ data, focused }: ResultJsonProps) {
 
   return (
     <div className="h-full overflow-hidden">
-      <VimJsonEditor ref={editorRef} value={jsonText} lightweight />
+      <VimJsonEditor ref={editorRef} value={jsonText} lightweight theme={theme} />
     </div>
   );
 }

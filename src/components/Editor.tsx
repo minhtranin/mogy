@@ -1,12 +1,12 @@
 import { useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { EditorView, keymap } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { javascript } from "@codemirror/lang-javascript";
 import { vim, Vim } from "@replit/codemirror-vim";
 import { basicSetup } from "codemirror";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, type CompletionContext, completionKeymap } from "@codemirror/autocomplete";
 import { editorSaveRef, saveAndQuitAllRef, ensureExCommands } from "../lib/vim-commands";
+import { getCmTheme, type ThemeName } from "../lib/themes";
 
 interface EditorProps {
   focused: boolean;
@@ -24,6 +24,7 @@ export interface EditorHandle {
   getText: () => string;
   setText: (text: string) => void;
   appendText: (text: string) => void;
+  setTheme: (theme: ThemeName) => void;
 }
 
 export default forwardRef<EditorHandle, EditorProps>(function Editor(
@@ -32,6 +33,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const themeCompartment = useRef(new Compartment());
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
   const onChangeRef = useRef(onChange);
@@ -79,6 +81,13 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const prefix = lastLine.trim() ? "\n" : "";
       view.dispatch({
         changes: { from: doc.length, insert: prefix + text },
+      });
+    },
+    setTheme(theme: ThemeName) {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({
+        effects: themeCompartment.current.reconfigure(getCmTheme(theme)),
       });
     },
   }));
@@ -214,7 +223,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
         vim(),
         basicSetup,
         javascript(),
-        oneDark,
+        themeCompartment.current.of(getCmTheme("mocha")),
         autocompletion({ override: [mongoCompletion], defaultKeymap: true, activateOnTyping: true }),
         // Add Ctrl+N/P as additional keys for navigation
         keymap.of(completionKeymap.map((binding: any) => {

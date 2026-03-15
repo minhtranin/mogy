@@ -55,10 +55,6 @@ body {
   background: var(--bg-surface);
 }
 
-.cm-editor .cm-activeLine {
-  background: rgba(69, 71, 90, 0.3);
-}
-
 .cm-editor .cm-cursor {
   border-left-color: var(--accent);
 }
