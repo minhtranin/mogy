@@ -13,7 +13,7 @@ interface ResultTableProps {
   data: unknown[];
   page: number;
   pageSize: number;
-  totalCount: number;
+  hasMore: boolean;
   onPageChange: (page: number) => void;
   onExpandRow: (doc: unknown, index: number) => void;
   focused: boolean;
@@ -61,7 +61,7 @@ export default function ResultTable({
   data,
   page,
   pageSize,
-  totalCount,
+  hasMore,
   onPageChange,
   onExpandRow,
   focused,
@@ -189,10 +189,8 @@ export default function ResultTable({
     columns,
     getCoreRowModel: coreRowModel,
     manualPagination: true,
-    pageCount: Math.ceil(totalCount / pageSize),
+    pageCount: hasMore ? page + 1 : page,
   });
-
-  const totalPages = Math.ceil(totalCount / pageSize);
 
   // Event delegation: single handler on tbody for click/dblclick
   const handleTbodyClick = useCallback((e: React.MouseEvent<HTMLTableSectionElement>) => {
@@ -262,20 +260,12 @@ export default function ResultTable({
       </div>
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {(page > 1 || hasMore) && (
         <div className="flex items-center justify-between px-3 py-2 border-t border-[var(--border)] bg-[var(--bg-secondary)] text-sm">
           <span className="text-[var(--text-muted)]">
-            {totalCount} documents | Page {page} of {totalPages} |{" "}
-            Row {selectedRow + 1}/{data.length}
+            Page {page}{hasMore ? "+" : ""} | Row {selectedRow + 1}/{data.length}
           </span>
           <div className="flex gap-2">
-            <button
-              onClick={() => onPageChange(1)}
-              disabled={page <= 1}
-              className="px-2 py-1 bg-[var(--bg-surface)] rounded disabled:opacity-30 hover:bg-[var(--border)]"
-            >
-              First
-            </button>
             <button
               onClick={() => onPageChange(page - 1)}
               disabled={page <= 1}
@@ -285,17 +275,10 @@ export default function ResultTable({
             </button>
             <button
               onClick={() => onPageChange(page + 1)}
-              disabled={page >= totalPages}
+              disabled={!hasMore}
               className="px-2 py-1 bg-[var(--bg-surface)] rounded disabled:opacity-30 hover:bg-[var(--border)]"
             >
               Next
-            </button>
-            <button
-              onClick={() => onPageChange(totalPages)}
-              disabled={page >= totalPages}
-              className="px-2 py-1 bg-[var(--bg-surface)] rounded disabled:opacity-30 hover:bg-[var(--border)]"
-            >
-              Last
             </button>
           </div>
         </div>

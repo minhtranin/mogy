@@ -9,7 +9,7 @@ export type QueryType = "Find" | "Aggregate";
 
 export interface QueryResult {
   documents: unknown[];
-  total_count: number;
+  has_more: boolean;
   query_type: QueryType;
   page: number;
   page_size: number;

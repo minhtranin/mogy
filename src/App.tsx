@@ -399,13 +399,10 @@ export default function App() {
       // Next page
       if (matchesBinding(e, kb.nextPage)) {
         const r = queryRef.current.result;
-        if (r && (r.query_type === "Find" || r.query_type === "Aggregate")) {
-          const totalPages = Math.ceil(r.total_count / r.page_size);
-          if (r.page < totalPages) {
-            e.preventDefault();
-            e.stopPropagation();
-            handlePageChangeRef.current(r.page + 1);
-          }
+        if (r && (r.query_type === "Find" || r.query_type === "Aggregate") && r.has_more) {
+          e.preventDefault();
+          e.stopPropagation();
+          handlePageChangeRef.current(r.page + 1);
         }
         return;
       }
@@ -417,31 +414,6 @@ export default function App() {
           e.preventDefault();
           e.stopPropagation();
           handlePageChangeRef.current(r.page - 1);
-        }
-        return;
-      }
-
-      // Last page
-      if (matchesBinding(e, kb.lastPage)) {
-        const r = queryRef.current.result;
-        if (r && (r.query_type === "Find" || r.query_type === "Aggregate")) {
-          const totalPages = Math.ceil(r.total_count / r.page_size);
-          if (r.page < totalPages) {
-            e.preventDefault();
-            e.stopPropagation();
-            handlePageChangeRef.current(totalPages);
-          }
-        }
-        return;
-      }
-
-      // First page
-      if (matchesBinding(e, kb.firstPage)) {
-        const r = queryRef.current.result;
-        if (r && (r.query_type === "Find" || r.query_type === "Aggregate") && r.page > 1) {
-          e.preventDefault();
-          e.stopPropagation();
-          handlePageChangeRef.current(1);
         }
         return;
       }

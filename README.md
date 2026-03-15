@@ -27,8 +27,6 @@ Built with Tauri v2 + React + CodeMirror.
 | `Ctrl+K` / `Ctrl+H` | Focus editor |
 | `Ctrl+J` / `Ctrl+L` | Focus results |
 | `Ctrl+N` / `Ctrl+P` | Next / previous page |
-| `Ctrl+Shift+N` | Last page |
-| `Ctrl+Shift+P` | First page |
 | `Shift+H` | Table view |
 | `Shift+L` | JSON view |
 | `?` | Show help |
@@ -70,8 +68,6 @@ All settings live in `~/.config/mogy/settings.json`. Create the file to override
     "focusResultsAlt": "ctrl+l",
     "nextPage": "ctrl+n",
     "prevPage": "ctrl+p",
-    "firstPage": "ctrl+shift+p",
-    "lastPage": "ctrl+shift+n",
     "tableView": "shift+h",
     "jsonView": "shift+l",
     "showHelp": "?",

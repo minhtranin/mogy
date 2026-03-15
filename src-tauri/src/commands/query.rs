@@ -39,7 +39,7 @@ pub struct QueryRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct QueryResult {
     pub documents: Vec<serde_json::Value>,
-    pub total_count: u64,
+    pub has_more: bool,
     pub query_type: QueryType,
     pub page: u64,
     pub page_size: u64,
@@ -290,12 +290,8 @@ pub async fn execute_query(
             let page_size = request.page_size.unwrap_or(20);
             let skip = (page - 1) * page_size;
 
-            let total_count = collection
-                .count_documents(filter.clone())
-                .await
-                .map_err(|e| format!("Count failed: {}", e))?;
-
-            let mut find = collection.find(filter).skip(skip).limit(page_size as i64);
+            // Fetch one extra to detect if there are more pages
+            let mut find = collection.find(filter).skip(skip).limit((page_size + 1) as i64);
 
             if let Some(sort_val) = &request.sort {
                 find = find.sort(json_to_bson_doc(sort_val)?);
@@ -319,9 +315,14 @@ pub async fn execute_query(
                 documents.push(bson_doc_to_json(&doc));
             }
 
+            let has_more = documents.len() > page_size as usize;
+            if has_more {
+                documents.pop();
+            }
+
             Ok(QueryResult {
                 documents,
-                total_count,
+                has_more,
                 query_type: QueryType::Find,
                 page,
                 page_size,
@@ -345,45 +346,14 @@ pub async fn execute_query(
                 doc.keys().any(|k| k == "$limit")
             });
 
-            // Build pipeline with skip and limit (skip must come BEFORE limit!)
+            // Build pipeline with skip and limit
             let mut full_pipeline = pipeline.clone();
-
-            // Add $skip stage for pagination
             full_pipeline.push(doc! { "$skip": skip as i64 });
 
-            // Add $limit stage if not present (default 20) - must come AFTER skip
+            // Fetch one extra to detect if there are more pages
             if !has_limit {
-                full_pipeline.push(doc! { "$limit": page_size as i64 });
+                full_pipeline.push(doc! { "$limit": (page_size + 1) as i64 });
             }
-
-            // Get total count (run pipeline without skip/limit)
-            let count_pipeline: Vec<Document> = pipeline.iter()
-                .filter(|doc| {
-                    let keys: Vec<_> = doc.keys().collect();
-                    !keys.iter().any(|k| *k == "$skip" || *k == "$limit")
-                })
-                .cloned()
-                .collect();
-
-            let total_count = if count_pipeline.is_empty() {
-                // Empty pipeline = count all documents in collection
-                collection.count_documents(doc! {})
-                    .await
-                    .map_err(|e| format!("Count failed: {}", e))?
-            } else {
-                // Run count pipeline
-                let count_cursor = collection
-                    .aggregate(count_pipeline)
-                    .await
-                    .map_err(|e| format!("Count aggregate failed: {}", e))?;
-
-                let mut count = 0u64;
-                let mut count_cursor = count_cursor;
-                while count_cursor.advance().await.map_err(|e| format!("Count cursor error: {}", e))? {
-                    count += 1;
-                }
-                count
-            };
 
             let mut cursor = collection
                 .aggregate(full_pipeline)
@@ -402,9 +372,14 @@ pub async fn execute_query(
                 documents.push(bson_doc_to_json(&doc));
             }
 
+            let has_more = !has_limit && documents.len() > page_size as usize;
+            if has_more {
+                documents.pop();
+            }
+
             Ok(QueryResult {
                 documents,
-                total_count,
+                has_more,
                 query_type: QueryType::Aggregate,
                 page,
                 page_size,
@@ -423,7 +398,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "count": count })],
-                total_count: count,
+                has_more: false,
                 query_type: QueryType::Count,
                 page: 1,
                 page_size: 1,
@@ -442,7 +417,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "deletedCount": result.deleted_count })],
-                total_count: result.deleted_count,
+                has_more: false,
                 query_type: QueryType::DeleteOne,
                 page: 1,
                 page_size: 1,
@@ -461,7 +436,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "deletedCount": result.deleted_count })],
-                total_count: result.deleted_count,
+                has_more: false,
                 query_type: QueryType::DeleteMany,
                 page: 1,
                 page_size: 1,
@@ -480,7 +455,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "insertedId": result.inserted_id })],
-                total_count: 1,
+                has_more: false,
                 query_type: QueryType::InsertOne,
                 page: 1,
                 page_size: 1,
@@ -513,7 +488,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "insertedCount": inserted_ids.len(), "insertedIds": inserted_ids })],
-                total_count: inserted_ids.len() as u64,
+                has_more: false,
                 query_type: QueryType::InsertMany,
                 page: 1,
                 page_size: inserted_ids.len() as u64,
@@ -543,7 +518,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
-                total_count: result.matched_count,
+                has_more: false,
                 query_type: QueryType::UpdateOne,
                 page: 1,
                 page_size: 1,
@@ -572,7 +547,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
-                total_count: result.matched_count,
+                has_more: false,
                 query_type: QueryType::UpdateMany,
                 page: 1,
                 page_size: 1,
@@ -601,7 +576,7 @@ pub async fn execute_query(
 
             Ok(QueryResult {
                 documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
-                total_count: result.matched_count,
+                has_more: false,
                 query_type: QueryType::ReplaceOne,
                 page: 1,
                 page_size: 1,
@@ -626,7 +601,7 @@ pub async fn execute_query(
             let count = values.len() as u64;
             Ok(QueryResult {
                 documents: values,
-                total_count: count,
+                has_more: false,
                 query_type: QueryType::Distinct,
                 page: 1,
                 page_size: count,
@@ -650,10 +625,9 @@ pub async fn execute_query(
                 None => vec![],
             };
 
-            let count = documents.len() as u64;
             Ok(QueryResult {
                 documents,
-                total_count: count,
+                has_more: false,
                 query_type: QueryType::FindOne,
                 page: 1,
                 page_size: 1,
@@ -681,10 +655,9 @@ pub async fn execute_query(
                 None => vec![],
             };
 
-            let count = documents.len() as u64;
             Ok(QueryResult {
                 documents,
-                total_count: count,
+                has_more: false,
                 query_type: QueryType::FindOneAndUpdate,
                 page: 1,
                 page_size: 1,
@@ -708,10 +681,9 @@ pub async fn execute_query(
                 None => vec![],
             };
 
-            let count = documents.len() as u64;
             Ok(QueryResult {
                 documents,
-                total_count: count,
+                has_more: false,
                 query_type: QueryType::FindOneAndDelete,
                 page: 1,
                 page_size: 1,
@@ -739,10 +711,9 @@ pub async fn execute_query(
                 None => vec![],
             };
 
-            let count = documents.len() as u64;
             Ok(QueryResult {
                 documents,
-                total_count: count,
+                has_more: false,
                 query_type: QueryType::FindOneAndReplace,
                 page: 1,
                 page_size: 1,

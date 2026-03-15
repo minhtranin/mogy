@@ -183,7 +183,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
             {result && effectiveMode !== "detail" && (
               <span className="text-xs text-[var(--text-secondary)]">
                 {result.query_type === "Find" || result.query_type === "Aggregate"
-                  ? `${result.total_count} docs | p${result.page}`
+                  ? `${result.documents.length} docs | p${result.page}${result.has_more ? "+" : ""}`
                   : `${result.documents.length} docs`}
               </span>
             )}
@@ -261,7 +261,7 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
                     data={result.documents}
                     page={result.page}
                     pageSize={result.page_size}
-                    totalCount={result.total_count}
+                    hasMore={result.has_more}
                     onPageChange={onPageChange}
                     onExpandRow={handleExpandRow}
                     focused={focused}

@@ -6,8 +6,6 @@ export interface KeyBindingMap {
   focusResultsAlt: string;
   nextPage: string;
   prevPage: string;
-  firstPage: string;
-  lastPage: string;
   tableView: string;
   jsonView: string;
   showHelp: string;
@@ -30,8 +28,6 @@ export const DEFAULT_BINDINGS: KeyBindingMap = {
   focusResultsAlt: "ctrl+l",
   nextPage: "ctrl+n",
   prevPage: "ctrl+p",
-  firstPage: "ctrl+shift+p",
-  lastPage: "ctrl+shift+n",
   tableView: "shift+h",
   jsonView: "shift+l",
   showHelp: "?",
