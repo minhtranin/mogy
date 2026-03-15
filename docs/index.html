@@ -85,7 +85,7 @@
     /* Keybinding table */
     .keybindings-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, 1fr);
       gap: 1.5rem;
     }
     .kb-group h3 {
@@ -132,6 +132,9 @@
       border-top: 1px solid #313244;
     }
 
+    @media (max-width: 900px) {
+      .keybindings-grid { grid-template-columns: 1fr 1fr; }
+    }
     @media (max-width: 640px) {
       .hero h1 { font-size: 2.5rem; }
       .keybindings-grid { grid-template-columns: 1fr; }
@@ -208,9 +211,9 @@
       </div>
       <div class="kb-group">
         <h3>Leader (Ctrl+Space, then...)</h3>
-        <div class="kb-row"><span class="kb-key">a</span><span class="kb-desc">Open connections</span></div>
-        <div class="kb-row"><span class="kb-key">d</span><span class="kb-desc">Open databases</span></div>
-        <div class="kb-row"><span class="kb-key">o</span><span class="kb-desc">Open collections</span></div>
+        <div class="kb-row"><span class="kb-key">a</span><span class="kb-desc">Connections</span></div>
+        <div class="kb-row"><span class="kb-key">d</span><span class="kb-desc">Databases</span></div>
+        <div class="kb-row"><span class="kb-key">o</span><span class="kb-desc">Collections</span></div>
         <div class="kb-row"><span class="kb-key">m</span><span class="kb-desc">Toggle maximize</span></div>
         <div class="kb-row"><span class="kb-key">l</span><span class="kb-desc">Load query file</span></div>
         <div class="kb-row"><span class="kb-key">c</span><span class="kb-desc">New query file</span></div>
@@ -219,21 +222,34 @@
       </div>
       <div class="kb-group">
         <h3>Results Panel</h3>
-        <div class="kb-row"><span class="kb-key">Shift+H / Shift+L</span><span class="kb-desc">Table / JSON view</span></div>
+        <div class="kb-row"><span class="kb-key">Shift+H</span><span class="kb-desc">Table view</span></div>
+        <div class="kb-row"><span class="kb-key">Shift+L</span><span class="kb-desc">JSON view</span></div>
         <div class="kb-row"><span class="kb-key">j / k</span><span class="kb-desc">Navigate rows</span></div>
         <div class="kb-row"><span class="kb-key">h / l</span><span class="kb-desc">Scroll horizontal</span></div>
         <div class="kb-row"><span class="kb-key">g / G</span><span class="kb-desc">First / last row</span></div>
         <div class="kb-row"><span class="kb-key">Enter</span><span class="kb-desc">Expand row detail</span></div>
       </div>
       <div class="kb-group">
-        <h3>Vim Editor</h3>
+        <h3>Editor</h3>
         <div class="kb-row"><span class="kb-key">jk</span><span class="kb-desc">Exit insert mode</span></div>
         <div class="kb-row"><span class="kb-key">:w</span><span class="kb-desc">Save query file</span></div>
-        <div class="kb-row"><span class="kb-key">:q</span><span class="kb-desc">Close detail view</span></div>
         <div class="kb-row"><span class="kb-key">:wqa</span><span class="kb-desc">Save and quit app</span></div>
       </div>
+      <div class="kb-group">
+        <h3>Detail View</h3>
+        <div class="kb-row"><span class="kb-key">:w</span><span class="kb-desc">Save document</span></div>
+        <div class="kb-row"><span class="kb-key">:q</span><span class="kb-desc">Back to list</span></div>
+        <div class="kb-row"><span class="kb-key">Esc</span><span class="kb-desc">Back to list</span></div>
+      </div>
+      <div class="kb-group">
+        <h3>Modals</h3>
+        <div class="kb-row"><span class="kb-key">j / k</span><span class="kb-desc">Navigate items</span></div>
+        <div class="kb-row"><span class="kb-key">Enter</span><span class="kb-desc">Select item</span></div>
+        <div class="kb-row"><span class="kb-key">Esc / Ctrl+[</span><span class="kb-desc">Close modal</span></div>
+        <div class="kb-row"><span class="kb-key">Ctrl+N / Ctrl+P</span><span class="kb-desc">Navigate items</span></div>
+      </div>
     </div>
-    <p style="margin-top: 1rem; font-size: 0.8rem; color: #585b70;">All keybindings are overridable via settings file.</p>
+    <p style="margin-top: 1rem; font-size: 0.8rem; color: #585b70;">All keybindings are overridable via <code style="color: #a6e3a1;">~/.config/mogy/settings.json</code></p>
   </div>
 
   <!-- Configuration -->
