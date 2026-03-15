@@ -10,10 +10,34 @@ export const saveAndQuitAllRef = { current: null as (() => void) | null };
 export const detailCmRef = { current: null as unknown };
 
 let defined = false;
+let clipboardPatched = false;
+
+// Sync vim unnamed register to system clipboard so y/Y/yy/d/dd etc.
+// are available outside the app
+function patchClipboardSync() {
+  if (clipboardPatched) return;
+  clipboardPatched = true;
+
+  const rc = Vim.getRegisterController();
+  const reg = rc.getRegister('"');
+  const origSetText = reg.setText.bind(reg);
+  const origPushText = reg.pushText.bind(reg);
+
+  reg.setText = (text: string, linewise?: boolean, blockwise?: boolean) => {
+    origSetText(text, linewise, blockwise);
+    if (text) navigator.clipboard.writeText(text).catch(() => {});
+  };
+  reg.pushText = (text: string, linewise?: boolean) => {
+    origPushText(text, linewise);
+    navigator.clipboard.writeText(reg.keyBuffer.join("")).catch(() => {});
+  };
+}
 
 export function ensureExCommands() {
   if (defined) return;
   defined = true;
+
+  patchClipboardSync();
 
   Vim.defineEx("write", "w", (cm: { getValue: () => string }) => {
     const text = cm.getValue();
