@@ -11,6 +11,8 @@ import { getCmTheme, type ThemeName } from "../lib/themes";
 interface EditorProps {
   focused: boolean;
   lightweight: boolean;
+  initialContent?: string;
+  theme?: ThemeName;
   onFocus: () => void;
   onSave?: () => void;
   onChange?: () => void;
@@ -29,7 +31,7 @@ export interface EditorHandle {
 }
 
 export default forwardRef<EditorHandle, EditorProps>(function Editor(
-  { focused, lightweight, onFocus, onSave, onChange, onSaveAndQuit, collections = [] },
+  { focused, lightweight, initialContent, theme = "mocha", onFocus, onSave, onChange, onSaveAndQuit, collections = [] },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -238,11 +240,11 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
     };
 
     const state = EditorState.create({
-      doc: "// Ctrl+Enter to run query\n\ndb.collection.find({})\n",
+      doc: initialContent || "// Ctrl+Enter to run query\n\ndb.collection.find({})\n",
       extensions: [
         vim(),
         syntaxCompartment.current.of(lightweight ? minimalSetup : [basicSetup, javascript()]),
-        themeCompartment.current.of(getCmTheme("mocha")),
+        themeCompartment.current.of(getCmTheme(theme)),
         autocompletion({ override: [mongoCompletion], defaultKeymap: true, activateOnTyping: true }),
         // Add Ctrl+N/P as additional keys for navigation
         keymap.of(completionKeymap.map((binding: any) => {

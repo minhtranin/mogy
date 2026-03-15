@@ -547,40 +547,30 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
-  // Restore last editor content and file on mount
+  // Restore session on mount
+  const [initialContent, setInitialContent] = useState<string | undefined>(undefined);
+
   useEffect(() => {
     loadSession()
-      .then((session) => {
-        if (session.current_file) {
-          // Load the last opened file
-          loadQueryFile(session.current_file)
-            .then((content) => {
-              editorRef.current?.setText(content);
-              setCurrentFile(session.current_file);
-              setIsDirty(false);
-            })
-            .catch(() => {
-              // File doesn't exist, fall back to untitled
-              if (session.last_editor_content) {
-                editorRef.current?.setText(session.last_editor_content);
-                setIsDirty(false);
-              }
-            });
-        } else if (session.last_editor_content) {
-          // No last file but have content - use that
-          editorRef.current?.setText(session.last_editor_content);
-          setIsDirty(false);
-        }
+      .then(async (session) => {
         if (session.layout_direction === "horizontal" || session.layout_direction === "vertical") {
           setLayoutDirection(session.layout_direction);
         }
         if (session.color_scheme && session.color_scheme !== currentTheme) {
           setCurrentTheme(session.color_scheme as ThemeName);
           applyCssVariables(session.color_scheme as ThemeName);
-          editorRef.current?.setTheme(session.color_scheme as ThemeName);
         }
         if (session.lightweight_editor) {
           setLightweightEditor(true);
+        }
+        if (session.current_file) {
+          try {
+            const content = await loadQueryFile(session.current_file);
+            setInitialContent(content);
+            setCurrentFile(session.current_file);
+          } catch {
+            // File doesn't exist, start fresh
+          }
         }
         setSessionLoaded(true);
       })
@@ -709,6 +699,8 @@ export default function App() {
               ref={editorRef}
               focused={activePanel === "editor"}
               lightweight={lightweightEditor}
+              initialContent={initialContent}
+              theme={currentTheme}
               onFocus={focusEditor}
               onSave={handleEditorSave}
               onSaveAndQuit={handleSaveAndQuit}
