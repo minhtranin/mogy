@@ -87,6 +87,8 @@ export default function App() {
   layoutRef.current = layout;
   const layoutDirectionRef = useRef(layoutDirection);
   layoutDirectionRef.current = layoutDirection;
+  const currentThemeRef = useRef(currentTheme);
+  currentThemeRef.current = currentTheme;
   const [leaderVisible, setLeaderVisible] = useState(false);
 
   // Remove splash once app is mounted and ready
@@ -130,7 +132,8 @@ export default function App() {
       mongoRef.current.selectedCollection,
       content,
       currentFileRef.current,
-      layoutDirectionRef.current
+      layoutDirectionRef.current,
+      currentThemeRef.current
     ).catch(() => {});
   }, []);
 
@@ -557,6 +560,11 @@ export default function App() {
         if (session.layout_direction === "horizontal" || session.layout_direction === "vertical") {
           setLayoutDirection(session.layout_direction);
         }
+        if (session.color_scheme && session.color_scheme !== currentTheme) {
+          setCurrentTheme(session.color_scheme as ThemeName);
+          applyCssVariables(session.color_scheme as ThemeName);
+          editorRef.current?.setTheme(session.color_scheme as ThemeName);
+        }
       })
       .catch(() => {});
   }, []);
@@ -579,7 +587,8 @@ export default function App() {
       mongoRef.current.selectedCollection,
       content,
       file,
-      layoutDirectionRef.current
+      layoutDirectionRef.current,
+      currentThemeRef.current
     ).catch(() => {});
 
     Promise.all([fileSave, sessionSave]).then(() => {

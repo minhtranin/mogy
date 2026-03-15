@@ -13,6 +13,8 @@ pub struct Session {
     pub current_file: Option<String>,
     #[serde(default)]
     pub layout_direction: Option<String>,
+    #[serde(default)]
+    pub color_scheme: Option<String>,
 }
 
 fn session_path() -> PathBuf {

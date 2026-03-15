@@ -27,6 +27,7 @@ export interface Session {
   last_editor_content: string | null;
   current_file: string | null;
   layout_direction: string | null;
+  color_scheme: string | null;
 }
 
 // Connection commands
@@ -56,8 +57,9 @@ export const saveSession = (
   collection: string | null,
   lastEditorContent?: string | null,
   currentFile?: string | null,
-  layoutDirection?: string | null
-) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection });
+  layoutDirection?: string | null,
+  colorScheme?: string | null
+) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme });
 
 // Metadata
 export const listDatabases = () => invoke<string[]>("list_databases");
