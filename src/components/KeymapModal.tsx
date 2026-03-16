@@ -12,7 +12,7 @@ const sections = [
       ["Ctrl+Enter", "Run query"],
       ["Ctrl+K / Ctrl+H", "Focus editor"],
       ["Ctrl+J / Ctrl+L", "Focus results"],
-      ["Ctrl+N / Ctrl+P", "Next / prev page"],
+      ["Ctrl+Alt+N / Ctrl+Alt+P", "Next / prev page"],
       ["?", "Show this help"],
     ],
   },
