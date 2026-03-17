@@ -2,12 +2,14 @@ import { useMemo, useState, useEffect, useRef, useCallback, memo } from "react";
 import {
   useReactTable,
   getCoreRowModel,
+  getFilteredRowModel,
   flexRender,
   type ColumnDef,
   type Row,
 } from "@tanstack/react-table";
 
 const coreRowModel = getCoreRowModel();
+const filteredRowModel = getFilteredRowModel();
 
 interface ResultTableProps {
   data: unknown[];
@@ -67,6 +69,9 @@ export default function ResultTable({
   focused,
 }: ResultTableProps) {
   const [selectedRow, setSelectedRow] = useState(0);
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [searchActive, setSearchActive] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
 
@@ -79,6 +84,8 @@ export default function ResultTable({
   selectedRowRef.current = selectedRow;
   const onExpandRowRef = useRef(onExpandRow);
   onExpandRowRef.current = onExpandRow;
+  const searchActiveRef = useRef(searchActive);
+  searchActiveRef.current = searchActive;
 
   // Reset selection when data changes
   useEffect(() => {
@@ -95,6 +102,10 @@ export default function ResultTable({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!focusedRef.current) return;
+
+      // Skip vim nav keys when search input is focused
+      if (searchActiveRef.current) return;
+
       const len = dataRef.current.length;
 
       switch (e.key) {
@@ -133,6 +144,11 @@ export default function ResultTable({
             const doc = dataRef.current[row];
             if (doc) onExpandRowRef.current(doc, row);
           }
+          break;
+        case "/":
+          e.preventDefault();
+          setSearchActive(true);
+          setTimeout(() => searchRef.current?.focus(), 0);
           break;
       }
     };
@@ -184,10 +200,24 @@ export default function ResultTable({
     }));
   }, [data]);
 
+  const globalFilterFn = useCallback(
+    (row: Row<Record<string, unknown>>, _columnId: string, filterValue: string) => {
+      const search = filterValue.toLowerCase();
+      return Object.values(row.original).some((val) =>
+        String(val ?? "").toLowerCase().includes(search)
+      );
+    },
+    []
+  );
+
   const table = useReactTable({
     data: data as Record<string, unknown>[],
     columns,
     getCoreRowModel: coreRowModel,
+    getFilteredRowModel: filteredRowModel,
+    globalFilterFn,
+    state: { globalFilter },
+    onGlobalFilterChange: setGlobalFilter,
     manualPagination: true,
     pageCount: hasMore ? page + 1 : page,
   });
@@ -224,8 +254,42 @@ export default function ResultTable({
     );
   }
 
+  const filteredRows = table.getRowModel().rows;
+
   return (
     <div className="flex flex-col h-full">
+      {searchActive && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+          <span className="text-[var(--accent)] text-sm">/</span>
+          <input
+            ref={searchRef}
+            value={globalFilter}
+            onChange={(e) => {
+              setGlobalFilter(e.target.value);
+              setSelectedRow(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" || (e.ctrlKey && e.key === "[")) {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearchActive(false);
+                setGlobalFilter("");
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearchActive(false);
+                searchRef.current?.blur();
+              }
+            }}
+            className="flex-1 bg-transparent text-sm outline-none text-[var(--text-primary)] placeholder-[var(--text-muted)]"
+            placeholder="Search rows..."
+            autoFocus
+          />
+          <span className="text-xs text-[var(--text-muted)]">
+            {filteredRows.length}/{data.length}
+          </span>
+        </div>
+      )}
       <div ref={tableRef} className="flex-1 overflow-auto">
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 bg-[var(--bg-secondary)]">
@@ -246,7 +310,7 @@ export default function ResultTable({
             ))}
           </thead>
           <tbody onClick={handleTbodyClick} onDoubleClick={handleTbodyDoubleClick}>
-            {table.getRowModel().rows.map((row, idx) => (
+            {filteredRows.map((row, idx) => (
               <TableRow
                 key={row.id}
                 row={row}
@@ -263,7 +327,7 @@ export default function ResultTable({
       {(page > 1 || hasMore) && (
         <div className="flex items-center justify-between px-3 py-2 border-t border-[var(--border)] bg-[var(--bg-secondary)] text-sm">
           <span className="text-[var(--text-muted)]">
-            Page {page}{hasMore ? "+" : ""} | Row {selectedRow + 1}/{data.length}
+            Page {page}{hasMore ? "+" : ""} | Row {selectedRow + 1}/{filteredRows.length}{globalFilter ? ` (${data.length} total)` : ""}
           </span>
           <div className="flex gap-2">
             <button
