@@ -159,6 +159,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
           { label: "$bucket", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
           { label: "$out", apply: "$out: \"collection\"" },
           { label: "$merge", apply: "$merge: {\n      into: \"collection\"\n    }" },
+          { label: "$addToSet", apply: "$addToSet: \"$field\"" },
         ];
         const filterStr = incomplete ? "$" + incomplete.toLowerCase() : "$";
         const filtered = stages.filter(s => s.label.toLowerCase().startsWith(filterStr));
@@ -211,6 +212,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
           { label: "$skip", type: "function", detail: "$skip", apply: "{ $skip: 0 }" },
           { label: "$unwind", type: "function", detail: "$unwind", apply: "{\n    $unwind: \"$field\"\n}" },
           { label: "$lookup", type: "function", detail: "$lookup", apply: "{\n    $lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n    }\n}" },
+          { label: "$addToSet", type: "function", detail: "$addToSet", apply: "{ $addToSet: \"$field\" }" },
           { label: "distinct", type: "function", detail: "(field, query?)", apply: "distinct(\"\")" },
           { label: "findOneAndUpdate", type: "function", detail: "(filter, update)", apply: "findOneAndUpdate({}, {$set:{}})" },
           { label: "findOneAndDelete", type: "function", detail: "(query)", apply: "findOneAndDelete({})" },
