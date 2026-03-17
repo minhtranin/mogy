@@ -28,12 +28,15 @@ jobs:
       - name: Build Tauri app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cargo install tauri-cli --locked
           cargo tauri build --bundles deb,appimage
       - name: Generate latest.json
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          echo "Files in appimage dir:"
+          ls -la src-tauri/target/release/bundle/appimage/ || echo "appimage dir missing"
           APPIMAGE_PATH=$(ls src-tauri/target/release/bundle/appimage/*.AppImage)
           APPIMAGE_SIG=$(cat "${APPIMAGE_PATH}.sig")
           APPIMAGE_NAME=$(basename "$APPIMAGE_PATH")
