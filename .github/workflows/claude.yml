@@ -1,0 +1,200 @@
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if should run
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          SHOULD_RUN="false"
+
+          # Auto-run on new PRs (auto review)
+          if [ "$EVENT_NAME" == "pull_request" ]; then
+            SHOULD_RUN="true"
+            echo "New PR opened — auto review"
+          fi
+
+          # Check @claude mention on issues/comments
+          if [ "$EVENT_NAME" == "issue_comment" ]; then
+            if echo "$COMMENT_BODY" | grep -qi "@claude"; then
+              SHOULD_RUN="true"
+              echo "@claude found in comment"
+            fi
+          fi
+
+          if [ "$EVENT_NAME" == "issues" ]; then
+            if echo "$ISSUE_BODY" | grep -qi "@claude"; then
+              SHOULD_RUN="true"
+              echo "@claude found in issue"
+            fi
+          fi
+
+          echo "should_run=${SHOULD_RUN}" >> $GITHUB_OUTPUT
+          if [ "$SHOULD_RUN" == "false" ]; then
+            echo "No trigger matched, skipping"
+          fi
+
+      - name: Install Claude Code
+        if: steps.check.outputs.should_run == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Fetch context
+        id: context
+        if: steps.check.outputs.should_run == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$EVENT_NAME" == "issue_comment" ] || [ "$EVENT_NAME" == "issues" ]; then
+            NUMBER="$ISSUE_NUMBER"
+            gh issue view "$NUMBER" --json title,body,state,author,comments > /tmp/context.json
+            echo "type=issue" >> $GITHUB_OUTPUT
+          elif [ "$EVENT_NAME" == "pull_request" ]; then
+            NUMBER="$PR_NUMBER"
+            gh pr view "$NUMBER" --json title,body,state,author,files,commits > /tmp/context.json
+            gh pr diff "$NUMBER" > /tmp/pr_diff.txt 2>/dev/null || true
+            echo "type=pr" >> $GITHUB_OUTPUT
+          fi
+
+          echo "number=$NUMBER" >> $GITHUB_OUTPUT
+
+          # Save trigger comment to file (avoids shell expansion issues)
+          printf '%s' "$COMMENT_BODY" > /tmp/trigger_comment.txt
+          printf '%s' "$COMMENT_AUTHOR" > /tmp/trigger_author.txt
+
+      - name: Run Claude Code
+        if: steps.check.outputs.should_run == 'true'
+        env:
+          ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          CLAUDE_CODE_DISABLE_NON_ESSENTIAL_TRAFFIC: 1
+          CONTEXT_TYPE: ${{ steps.context.outputs.type }}
+          CONTEXT_NUMBER: ${{ steps.context.outputs.number }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          cat > /tmp/build_prompt.py << 'PYTHON_SCRIPT'
+          import json
+          import os
+
+          context_type = os.environ["CONTEXT_TYPE"]
+          context_number = os.environ["CONTEXT_NUMBER"]
+          repo = os.environ["REPO"]
+          event_name = os.environ["EVENT_NAME"]
+
+          with open("/tmp/context.json") as f:
+              data = json.loads(f.read())
+
+          trigger_comment = ""
+          trigger_author = ""
+          try:
+              with open("/tmp/trigger_comment.txt") as f:
+                  trigger_comment = f.read()
+              with open("/tmp/trigger_author.txt") as f:
+                  trigger_author = f.read()
+          except:
+              pass
+
+          pr_diff = ""
+          try:
+              with open("/tmp/pr_diff.txt") as f:
+                  pr_diff = f.read()[:10000]  # Limit diff size
+          except:
+              pass
+
+          # Build context
+          ctx = f"Title: {data.get('title', 'N/A')}\n"
+          ctx += f"State: {data.get('state', 'N/A')}\n"
+          ctx += f"Author: {data.get('author', {}).get('login', 'N/A')}\n\n"
+          ctx += f"Body:\n{data.get('body', '(empty)')}\n\n"
+
+          if data.get('comments'):
+              ctx += "Comments:\n"
+              for c in data['comments']:
+                  ctx += f"\n- {c.get('author', {}).get('login', 'Unknown')}"
+                  ctx += f" at {c.get('createdAt', '')}:\n"
+                  ctx += f"  {c.get('body', '')}\n"
+
+          if pr_diff:
+              ctx += f"\nDiff:\n```\n{pr_diff}\n```\n"
+
+          # Build prompt
+          if event_name == "pull_request":
+              task = """Your task is to review this pull request:
+          1. Analyze the PR title, description, and diff
+          2. Check for bugs, security issues, and code quality
+          3. Suggest improvements if needed
+          4. Be concise and constructive
+          5. If the PR looks good, say so briefly"""
+          else:
+              task = """Your task is to:
+          1. Analyze the full issue context provided above
+          2. Understand what the user is asking for in the trigger comment
+          3. Provide helpful, concise responses
+          4. If code changes are needed, explain what should be done"""
+
+          prompt = "You are Claude, an AI assistant helping with GitHub issues and pull requests.\n\n"
+          prompt += f"<repository>\n{repo}\n</repository>\n\n"
+          prompt += f"<type>\n{context_type}\n</type>\n\n"
+          prompt += f"<number>\n{context_number}\n</number>\n\n"
+          prompt += f"<full_context>\n{ctx}\n</full_context>\n\n"
+
+          if trigger_comment:
+              prompt += f"<trigger_comment>\n{trigger_comment}\n</trigger_comment>\n\n"
+              prompt += f"<trigger_author>\n@{trigger_author}\n</trigger_author>\n\n"
+
+          prompt += task + "\n\n"
+          prompt += """Guidelines:
+          - Be friendly and concise
+          - Use code blocks for code examples
+          - Reference specific files with paths when applicable"""
+
+          with open('/tmp/prompt.txt', 'w') as f:
+              f.write(prompt)
+          PYTHON_SCRIPT
+
+          python3 /tmp/build_prompt.py
+          claude "$(< /tmp/prompt.txt)" 2>&1 | tee /tmp/output.txt
+
+      - name: Post response
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('/tmp/output.txt', 'utf8');
+            const issueNumber = '${{ steps.context.outputs.number }}';
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: `**@claude**\n\n${output}\n\n---\n*generated via CC*`
+            });
