@@ -238,6 +238,24 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
         };
       }
 
+      // MongoDB type constructors: ObjectId, ISODate, NumberDecimal, etc.
+      const typeMatch = context.matchBefore(/[A-Z]\w*/);
+      if (typeMatch && typeMatch.text.length > 0) {
+        const filter = typeMatch.text.toLowerCase();
+        const types = [
+          { label: "ObjectId", detail: "(id?)", apply: "ObjectId(\"\")" },
+          { label: "ISODate", detail: "(date?)", apply: "ISODate(\"\")" },
+          { label: "NumberDecimal", detail: "(value)", apply: "NumberDecimal(\"\")" },
+        ];
+        const filtered = types.filter(t => t.label.toLowerCase().startsWith(filter));
+        if (filtered.length === 0) return null;
+        return {
+          from: typeMatch.from,
+          options: filtered.map(t => ({ label: t.label, type: "type", detail: t.detail, apply: t.apply })),
+          validFor: /^[A-Z]\w*$/,
+        };
+      }
+
       return null;
     };
 

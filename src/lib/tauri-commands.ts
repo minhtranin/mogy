@@ -126,17 +126,12 @@ const MOGY_AI_URL = import.meta.env.VITE_MOGY_AI_URL || "http://18.139.3.205:696
 
 export async function generateAIQuery(
   prompt: string,
-  collections: string[],
   signal?: AbortSignal
 ): Promise<AIQueryResult> {
-  const context = collections.length > 0
-    ? `Available collections: ${collections.join(", ")}`
-    : "";
-
   const res = await fetch(`${MOGY_AI_URL}/api/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, context }),
+    body: JSON.stringify({ prompt }),
     signal,
   });
 

@@ -170,16 +170,9 @@ export default function App() {
     queryRef.current.setError(null);
 
     try {
-      const res = await generateAIQuery(
-        text,
-        mongoRef.current.collections,
-        abort.signal
-      );
+      const res = await generateAIQuery(text, abort.signal);
       if (abort.signal.aborted) return;
-      // Insert generated query at cursor and execute
       editorRef.current?.insertAtCursor("\n" + res.query + "\n");
-      lastQueryText.current = res.query;
-      queryRef.current.runQuery(selectedDbRef.current!, res.query);
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") return;
       queryRef.current.setError(String(e instanceof Error ? e.message : e));
