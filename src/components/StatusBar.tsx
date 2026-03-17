@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { PanelLayout } from "../hooks/usePanelFocus";
+import type { UpdateState } from "../hooks/useUpdater";
 
 const appWindow = getCurrentWindow();
 
@@ -13,6 +14,7 @@ interface StatusBarProps {
   leaderVisible?: boolean;
   onClose: () => void;
   onCommandPalette: () => void;
+  updater?: UpdateState;
 }
 
 export default function StatusBar({
@@ -25,6 +27,7 @@ export default function StatusBar({
   leaderVisible,
   onClose,
   onCommandPalette,
+  updater,
 }: StatusBarProps) {
   return (
     <div
@@ -81,6 +84,19 @@ export default function StatusBar({
 
       {/* Right: hints + window controls */}
       <div className="flex items-center gap-3 min-w-0 flex-1 justify-end">
+        {updater?.available && !updater.downloading && (
+          <button
+            onClick={updater.install}
+            className="shrink-0 px-2 py-0.5 text-[var(--bg-primary)] bg-[var(--accent)] rounded hover:bg-[var(--accent-hover)] transition-colors"
+          >
+            Update {updater.version}
+          </button>
+        )}
+        {updater?.downloading && (
+          <span className="text-[var(--accent)] shrink-0">
+            Updating... {updater.progress}%
+          </span>
+        )}
         {leaderVisible && (
           <span className="text-[var(--accent)] shrink-0 animate-pulse">^Space...</span>
         )}

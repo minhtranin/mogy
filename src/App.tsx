@@ -14,6 +14,7 @@ const CommandPalette = lazy(() => import("./components/CommandPalette"));
 import { useMongoConnection } from "./hooks/useMongoConnection";
 import { useQueryExecution } from "./hooks/useQueryExecution";
 import { usePanelFocus } from "./hooks/usePanelFocus";
+import { useUpdater } from "./hooks/useUpdater";
 import {
   saveQueryFile,
   loadQueryFile,
@@ -34,6 +35,7 @@ import {
 export default function App() {
   const mongo = useMongoConnection();
   const query = useQueryExecution();
+  const updater = useUpdater();
   const {
     activePanel,
     layout,
@@ -690,6 +692,7 @@ export default function App() {
         leaderVisible={leaderVisible}
         onClose={handleAppClose}
         onCommandPalette={openCommandPalette}
+        updater={updater}
       />
 
       <div className={`flex-1 flex ${isHorizontal ? "flex-row" : "flex-col"} min-h-0`}>

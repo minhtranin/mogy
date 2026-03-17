@@ -12,6 +12,8 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "core:window:allow-show",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

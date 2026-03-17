@@ -26,9 +26,30 @@ jobs:
         working-directory: src-tauri
         run: cargo test
       - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           cargo install tauri-cli --locked
           cargo tauri build --bundles deb,appimage
+      - name: Generate latest.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APPIMAGE_PATH=$(ls src-tauri/target/release/bundle/appimage/*.AppImage)
+          APPIMAGE_SIG=$(cat "${APPIMAGE_PATH}.sig")
+          APPIMAGE_NAME=$(basename "$APPIMAGE_PATH")
+          cat > latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "See the assets for details.",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "linux-x86_64": {
+                "url": "https://github.com/minhtranin/mogy/releases/download/${GITHUB_REF_NAME}/${APPIMAGE_NAME}",
+                "signature": "${APPIMAGE_SIG}"
+              }
+            }
+          }
+          EOF
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -37,4 +58,6 @@ jobs:
             --title "Mogy ${{ github.ref_name }}" \
             --notes "See the assets to download this version and install." \
             src-tauri/target/release/bundle/deb/*.deb \
-            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+            latest.json
