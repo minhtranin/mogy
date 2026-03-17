@@ -8,6 +8,7 @@ interface StatusBarProps {
   activeConnection: string | null;
   selectedDb: string | null;
   loading: boolean;
+  aiLoading?: boolean;
   layout: PanelLayout;
   currentFile: string | null;
   isDirty: boolean;
@@ -21,6 +22,7 @@ export default function StatusBar({
   activeConnection,
   selectedDb,
   loading,
+  aiLoading,
   layout,
   currentFile,
   isDirty,
@@ -99,6 +101,9 @@ export default function StatusBar({
         )}
         {leaderVisible && (
           <span className="text-[var(--accent)] shrink-0 animate-pulse">^Space...</span>
+        )}
+        {aiLoading && (
+          <span className="text-[var(--accent)] shrink-0 animate-pulse">AI generating... (Esc to cancel)</span>
         )}
         {loading && (
           <span className="text-[var(--warning)] shrink-0 animate-pulse">Running...</span>

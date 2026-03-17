@@ -111,3 +111,39 @@ export function parseCollectionFromQuery(query: string): string | null {
   const match = query.trim().match(/^db\.(\w+)\.(find|aggregate)/);
   return match ? match[1] ?? null : null;
 }
+
+export function isDirectQuery(text: string): boolean {
+  return text.trimStart().startsWith("db.");
+}
+
+// AI query generation
+export interface AIQueryResult {
+  query: string;
+  cached: boolean;
+}
+
+const MOGY_AI_URL = import.meta.env.VITE_MOGY_AI_URL || "http://18.139.3.205:6969";
+
+export async function generateAIQuery(
+  prompt: string,
+  collections: string[],
+  signal?: AbortSignal
+): Promise<AIQueryResult> {
+  const context = collections.length > 0
+    ? `Available collections: ${collections.join(", ")}`
+    : "";
+
+  const res = await fetch(`${MOGY_AI_URL}/api/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, context }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "AI service unavailable" }));
+    throw new Error(err.error || `AI error: ${res.status}`);
+  }
+
+  return res.json();
+}
