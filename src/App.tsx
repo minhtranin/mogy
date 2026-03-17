@@ -22,6 +22,8 @@ import {
   loadSession,
   saveSession,
   loadSettings,
+  isDirectQuery,
+  generateAIQuery,
 } from "./lib/tauri-commands";
 import { applyCssVariables, THEME_LIST, type ThemeName } from "./lib/themes";
 import {
@@ -70,6 +72,8 @@ export default function App() {
   const leaderActive = useRef(false);
   const leaderTimeout = useRef<ReturnType<typeof setTimeout>>();
   const lastQueryText = useRef("");
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const editorRef = useRef<EditorHandle | null>(null);
   const resultsPanelRef = useRef<ResultsPanelHandle | null>(null);
@@ -144,15 +148,45 @@ export default function App() {
     ).catch(() => {});
   }, []);
 
-  const handleRunQuery = useCallback((text: string) => {
+  const handleRunQuery = useCallback(async (text: string) => {
     if (!selectedDbRef.current) {
       queryRef.current.setError(
         "No database selected. Press Ctrl+Space d to select one."
       );
       return;
     }
-    lastQueryText.current = text;
-    queryRef.current.runQuery(selectedDbRef.current, text);
+
+    if (isDirectQuery(text)) {
+      lastQueryText.current = text;
+      queryRef.current.runQuery(selectedDbRef.current, text);
+      return;
+    }
+
+    // AI prompt mode
+    aiAbortRef.current?.abort();
+    const abort = new AbortController();
+    aiAbortRef.current = abort;
+    setAiLoading(true);
+    queryRef.current.setError(null);
+
+    try {
+      const res = await generateAIQuery(
+        text,
+        mongoRef.current.collections,
+        abort.signal
+      );
+      if (abort.signal.aborted) return;
+      // Insert generated query at cursor and execute
+      editorRef.current?.insertAtCursor("\n" + res.query + "\n");
+      lastQueryText.current = res.query;
+      queryRef.current.runQuery(selectedDbRef.current!, res.query);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      queryRef.current.setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setAiLoading(false);
+      aiAbortRef.current = null;
+    }
   }, []);
 
   const handlePageChange = useCallback((page: number) => {
@@ -401,6 +435,15 @@ export default function App() {
       if (e.ctrlKey && e.key === ";") {
         e.preventDefault();
         e.stopPropagation();
+        return;
+      }
+
+      // Esc or Ctrl+[ to cancel AI query
+      if ((e.key === "Escape" || (e.ctrlKey && e.key === "[")) && aiAbortRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        aiAbortRef.current.abort();
+        aiAbortRef.current = null;
         return;
       }
 
@@ -686,6 +729,7 @@ export default function App() {
         activeConnection={mongo.activeConnection}
         selectedDb={mongo.selectedDb}
         loading={query.loading}
+        aiLoading={aiLoading}
         layout={layout}
         currentFile={currentFile}
         isDirty={isDirty}
