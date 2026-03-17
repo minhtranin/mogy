@@ -1,6 +1,6 @@
 [package]
 name = "mogy"
-version = "0.1.0"
+version = "0.1.1"
 description = "MongoDB Query Tool with Vim Motions"
 authors = ["tcm"]
 license = "MIT"
