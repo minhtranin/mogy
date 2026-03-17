@@ -416,7 +416,16 @@ pub async fn execute_query(
                 .map_err(|e| format!("DeleteOne failed: {}", e))?;
 
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "deletedCount": result.deleted_count })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "deletedCount": result.deleted_count,
+                    "insertedId": null,
+                    "insertedCount": 0,
+                    "matchedCount": 0,
+                    "modifiedCount": 0,
+                    "upsertedId": null,
+                    "upsertedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::DeleteOne,
                 page: 1,
@@ -435,7 +444,16 @@ pub async fn execute_query(
                 .map_err(|e| format!("DeleteMany failed: {}", e))?;
 
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "deletedCount": result.deleted_count })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "deletedCount": result.deleted_count,
+                    "insertedId": null,
+                    "insertedCount": 0,
+                    "matchedCount": 0,
+                    "modifiedCount": 0,
+                    "upsertedId": null,
+                    "upsertedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::DeleteMany,
                 page: 1,
@@ -454,7 +472,16 @@ pub async fn execute_query(
                 .map_err(|e| format!("InsertOne failed: {}", e))?;
 
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "insertedId": result.inserted_id })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "insertedId": bson_to_json_value(&result.inserted_id),
+                    "insertedCount": 1,
+                    "matchedCount": 0,
+                    "modifiedCount": 0,
+                    "deletedCount": 0,
+                    "upsertedId": null,
+                    "upsertedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::InsertOne,
                 page: 1,
@@ -487,7 +514,16 @@ pub async fn execute_query(
                 .collect();
 
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "insertedCount": inserted_ids.len(), "insertedIds": inserted_ids })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "insertedIds": inserted_ids,
+                    "insertedCount": inserted_ids.len(),
+                    "matchedCount": 0,
+                    "modifiedCount": 0,
+                    "deletedCount": 0,
+                    "upsertedId": null,
+                    "upsertedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::InsertMany,
                 page: 1,
@@ -516,8 +552,20 @@ pub async fn execute_query(
                 .await
                 .map_err(|e| format!("UpdateOne failed: {}", e))?;
 
+            let upserted_count = if result.upserted_id.is_some() { 1 } else { 0 };
+            let upserted_id_json = result.upserted_id.as_ref().map(|id| bson_to_json_value(id));
+
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "matchedCount": result.matched_count,
+                    "modifiedCount": result.modified_count,
+                    "upsertedId": upserted_id_json,
+                    "upsertedCount": upserted_count,
+                    "insertedId": null,
+                    "insertedCount": 0,
+                    "deletedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::UpdateOne,
                 page: 1,
@@ -545,8 +593,20 @@ pub async fn execute_query(
                 .await
                 .map_err(|e| format!("UpdateMany failed: {}", e))?;
 
+            let upserted_count = if result.upserted_id.is_some() { 1 } else { 0 };
+            let upserted_id_json = result.upserted_id.as_ref().map(|id| bson_to_json_value(id));
+
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "matchedCount": result.matched_count,
+                    "modifiedCount": result.modified_count,
+                    "upsertedId": upserted_id_json,
+                    "upsertedCount": upserted_count,
+                    "insertedId": null,
+                    "insertedCount": 0,
+                    "deletedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::UpdateMany,
                 page: 1,
@@ -574,8 +634,20 @@ pub async fn execute_query(
                 .await
                 .map_err(|e| format!("ReplaceOne failed: {}", e))?;
 
+            let upserted_count = if result.upserted_id.is_some() { 1 } else { 0 };
+            let upserted_id_json = result.upserted_id.as_ref().map(|id| bson_to_json_value(id));
+
             Ok(QueryResult {
-                documents: vec![serde_json::json!({ "matchedCount": result.matched_count, "modifiedCount": result.modified_count, "upsertedId": result.upserted_id })],
+                documents: vec![serde_json::json!({
+                    "acknowledged": true,
+                    "matchedCount": result.matched_count,
+                    "modifiedCount": result.modified_count,
+                    "upsertedId": upserted_id_json,
+                    "upsertedCount": upserted_count,
+                    "insertedId": null,
+                    "insertedCount": 0,
+                    "deletedCount": 0
+                })],
                 has_more: false,
                 query_type: QueryType::ReplaceOne,
                 page: 1,

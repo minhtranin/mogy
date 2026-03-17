@@ -85,6 +85,15 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
       }
     }, [view.mode, focused]);
 
+    // Reset to table view when result changes (e.g., new query executed)
+    // This ensures mutation results (delete, update, insert) show in table/json view
+    // instead of staying stuck in document detail view
+    useEffect(() => {
+      if (result && view.mode === "detail") {
+        setView({ mode: "table" });
+      }
+    }, [result]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const handleExpandRow = useCallback((doc: unknown, index: number) => {
       setView({ mode: "detail", document: doc, index });
     }, []);
@@ -178,13 +187,18 @@ export default forwardRef<ResultsPanelHandle, ResultsPanelProps>(
         <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-secondary)] border-b border-[var(--border)]">
           <div className="flex items-center gap-3">
             <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">
-              {effectiveMode === "detail" ? "Document Detail" : "Results"}
+              {effectiveMode === "detail" ? "Document Detail" : 
+                result?.query_type && !["Find", "Aggregate", "FindOne", "Distinct", "Count"].includes(result.query_type)
+                  ? `${result.query_type} Result`
+                  : "Results"}
             </span>
             {result && effectiveMode !== "detail" && (
               <span className="text-xs text-[var(--text-secondary)]">
                 {result.query_type === "Find" || result.query_type === "Aggregate"
                   ? `${result.documents.length} docs | p${result.page}${result.has_more ? "+" : ""}`
-                  : `${result.documents.length} docs`}
+                  : result.query_type === "FindOne" || result.query_type === "Distinct" || result.query_type === "Count"
+                    ? `${result.documents.length} docs`
+                    : null}
               </span>
             )}
             {effectiveMode === "detail" && (
