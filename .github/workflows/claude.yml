@@ -1,0 +1,170 @@
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if @claude is mentioned
+        id: check_mention
+        run: |
+          MENTIONED="false"
+
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            BODY="${{ github.event.comment.body }}"
+          elif [ "${{ github.event_name }}" == "issues" ]; then
+            BODY="${{ github.event.issue.body }}"
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            BODY="${{ github.event.pull_request.body }}"
+          fi
+
+          if echo "$BODY" | grep -qi "@claude"; then
+            MENTIONED="true"
+            echo "@claude found in content"
+          else
+            echo "@claude NOT found, skipping..."
+          fi
+
+          echo "mentioned=${MENTIONED}" >> $GITHUB_OUTPUT
+
+          if [ "$MENTIONED" == "false" ]; then
+            exit 1  # Skip remaining steps
+          fi
+
+      - name: Install Claude Code
+        if: steps.check_mention.outputs.mentioned == 'true'
+        run: |
+          npm install -g @anthropic-ai/claude-code
+
+      - name: Fetch full issue context
+        id: context
+        if: steps.check_mention.outputs.mentioned == 'true'
+        run: |
+          if [ "${{ github.event_name }}" == "issue_comment" ] || [ "${{ github.event_name }}" == "issues" ]; then
+            ISSUE_NUMBER="${{ github.event.issue.number }}"
+            ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json title,body,state,author,comments)
+            echo "issue_json<<EOF" >> $GITHUB_OUTPUT
+            echo "$ISSUE_JSON" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+            echo "type=issue" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            PR_JSON=$(gh pr view "$PR_NUMBER" --json title,body,state,author)
+            echo "pr_json<<EOF" >> $GITHUB_OUTPUT
+            echo "$PR_JSON" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "type=pr" >> $GITHUB_OUTPUT
+          fi
+
+          {
+            echo "trigger_comment<<EOF"
+            echo "${{ github.event.comment.body }}"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          echo "trigger_author=${{ github.event.comment.user.login }}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Claude Code
+        if: steps.check_mention.outputs.mentioned == 'true'
+        env:
+          ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
+          ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          CLAUDE_CODE_DISABLE_NON_ESSENTIAL_TRAFFIC: 1
+          ISSUE_TYPE: ${{ steps.context.outputs.type }}
+          ISSUE_NUMBER: ${{ steps.context.outputs.number }}
+          TRIGGER_AUTHOR: ${{ steps.context.outputs.trigger_author }}
+          REPO: ${{ github.repository }}
+          TRIGGER_COMMENT: ${{ steps.context.outputs.trigger_comment }}
+          ISSUE_JSON: ${{ steps.context.outputs.issue_json }}
+          PR_JSON: ${{ steps.context.outputs.pr_json }}
+        run: |
+          cat > /tmp/build_prompt.py << 'PYTHON_SCRIPT'
+          import json
+          import os
+
+          issue_type = os.environ["ISSUE_TYPE"]
+          issue_number = os.environ["ISSUE_NUMBER"]
+          trigger_author = os.environ["TRIGGER_AUTHOR"]
+          repo = os.environ["REPO"]
+          trigger_comment = os.environ["TRIGGER_COMMENT"]
+
+          if issue_type == "issue":
+              issue_json_str = os.environ["ISSUE_JSON"]
+          else:
+              issue_json_str = os.environ["PR_JSON"]
+
+          issue_data = json.loads(issue_json_str)
+
+          context_text = "Issue Title: " + issue_data.get('title', 'N/A') + "\n"
+          context_text += "State: " + issue_data.get('state', 'N/A') + "\n"
+          context_text += "Author: " + issue_data.get('author', {}).get('login', 'N/A') + "\n\n"
+          context_text += "Body:\n" + issue_data.get('body', '(empty)') + "\n\n"
+          context_text += "Comments:\n"
+
+          for comment in issue_data.get('comments', []):
+              context_text += "\n- " + comment.get('author', {}).get('login', 'Unknown')
+              context_text += " at " + comment.get('createdAt', 'Unknown') + ":\n"
+              context_text += "  " + comment.get('body', '') + "\n"
+
+          prompt = "You are Claude, an AI assistant designed to help with GitHub issues and pull requests.\n\n"
+          prompt += "<repository>\n" + repo + "\n</repository>\n\n"
+          prompt += "<issue_type>\n" + issue_type + "\n</issue_type>\n\n"
+          prompt += "<issue_number>\n" + issue_number + "\n</issue_number>\n\n"
+          prompt += "<full_context>\n" + context_text + "\n</full_context>\n\n"
+          prompt += "<trigger_comment>\n" + trigger_comment + "\n</trigger_comment>\n\n"
+          prompt += "<trigger_author>\n@" + trigger_author + "\n</trigger_author>\n\n"
+          prompt += """Your task is to:
+          1. Analyze the full issue context provided above
+          2. Understand what the user is asking for in the trigger comment
+          3. Provide helpful, concise responses
+          4. If code changes are needed, explain what should be done
+
+          Important guidelines:
+          - Be friendly and helpful
+          - Keep responses concise but complete
+          - Use code blocks for code examples
+          - Reference specific files with paths when applicable
+          - If you don't know something, be honest about it
+          """
+
+          with open('/tmp/prompt.txt', 'w') as f:
+              f.write(prompt)
+          PYTHON_SCRIPT
+
+          python3 /tmp/build_prompt.py
+          claude "$(< /tmp/prompt.txt)" 2>&1 | tee /tmp/output.txt
+
+      - name: Post response
+        if: steps.check_mention.outputs.mentioned == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('/tmp/output.txt', 'utf8');
+            const issueNumber = '${{ steps.context.outputs.number }}';
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: `**@claude**\n\n${output}\n\n---\n*generated via CC*`
+            });
