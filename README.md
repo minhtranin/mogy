@@ -8,6 +8,14 @@ Built with Tauri v2 + React + CodeMirror.
   <img src="./mogy.png" alt="Mogy" width="200" />
 </p>
 
+## Install
+
+```bash
+curl -sL https://raw.githubusercontent.com/minhtranin/mogy/master/install.sh | bash
+```
+
+Installs the AppImage to `~/.local/bin/mogy`, sets up the icon and desktop entry (app launcher).
+
 ## Features
 
 - **First-class Vim support** — Full vim mode in the editor with `jk` to exit insert mode, `:w` to save, `:wqa` to save and quit
