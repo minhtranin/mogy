@@ -513,8 +513,8 @@ export default function App() {
         return;
       }
 
-      // Show help
-      if (matchesBinding(e, kb.showHelp)) {
+      // Show help (only when editor is not focused)
+      if (matchesBinding(e, kb.showHelp) && activePanelRef.current !== "editor") {
         e.preventDefault();
         e.stopPropagation();
         setShowKeymap(true);
