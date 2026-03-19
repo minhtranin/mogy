@@ -174,7 +174,7 @@ jobs:
           user_content += task
 
           payload = json.dumps({
-              "model": "MiniMax-M2.5",
+              "model": "MiniMax-M2.7",
               "max_tokens": 8192,
               "system": (
                   "You are a senior software engineer assistant embedded in a GitHub repository. "
