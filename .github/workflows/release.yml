@@ -56,11 +56,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh release create ${{ github.ref_name }} \
-          --title "Mogy ${{ github.ref_name }}" \
-          --generate-notes \
-          --update-if-exists \
-          src-tauri/target/release/bundle/deb/*.deb \
-          src-tauri/target/release/bundle/appimage/*.AppImage \
-          src-tauri/target/release/bundle/appimage/*.AppImage.sig \
-          latest.json
+           gh release delete ${{ github.ref_name }} --yes --cleanup-tag 2>/dev/null || true
+              gh release create ${{ github.ref_name }} \
+                --title "Mogy ${{ github.ref_name }}" \
+                --generate-notes \
+                src-tauri/target/release/bundle/deb/*.deb \
+                src-tauri/target/release/bundle/appimage/*.AppImage \
+                src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+                latest.json
