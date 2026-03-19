@@ -531,9 +531,25 @@ pub async fn execute_query(
             })
         }
         QueryType::UpdateOne => {
+            // Extract filter from $match stage if filter is None (for UpdateOne, filter is in pipeline)
             let filter = match &request.filter {
                 Some(f) => json_to_bson_doc(f)?,
-                None => doc! {},
+                None => {
+                    // Try to get filter from $match in pipeline
+                    if let Some(pipeline) = &request.pipeline {
+                        if let Some(stage) = pipeline.iter().find_map(|s| s.get("$match")) {
+                            if let Some(f) = stage.get("$match") {
+                                json_to_bson_doc(f)?
+                            } else {
+                                doc! {}
+                            }
+                        } else {
+                            doc! {}
+                        }
+                    } else {
+                        doc! {}
+                    }
+                }
             };
             let update = match &request.pipeline {
                 Some(p) => {
@@ -573,9 +589,25 @@ pub async fn execute_query(
             })
         }
         QueryType::UpdateMany => {
+            // Extract filter from $match stage if filter is None (for UpdateMany, filter is in pipeline)
             let filter = match &request.filter {
                 Some(f) => json_to_bson_doc(f)?,
-                None => doc! {},
+                None => {
+                    // Try to get filter from $match in pipeline
+                    if let Some(pipeline) = &request.pipeline {
+                        if let Some(stage) = pipeline.iter().find_map(|s| s.get("$match")) {
+                            if let Some(f) = stage.get("$match") {
+                                json_to_bson_doc(f)?
+                            } else {
+                                doc! {}
+                            }
+                        } else {
+                            doc! {}
+                        }
+                    } else {
+                        doc! {}
+                    }
+                }
             };
             let update = match &request.pipeline {
                 Some(p) => {
@@ -614,9 +646,25 @@ pub async fn execute_query(
             })
         }
         QueryType::ReplaceOne => {
+            // Extract filter from $match stage if filter is None (for ReplaceOne, filter is in pipeline)
             let filter = match &request.filter {
                 Some(f) => json_to_bson_doc(f)?,
-                None => doc! {},
+                None => {
+                    // Try to get filter from $match in pipeline
+                    if let Some(pipeline) = &request.pipeline {
+                        if let Some(stage) = pipeline.iter().find_map(|s| s.get("$match")) {
+                            if let Some(f) = stage.get("$match") {
+                                json_to_bson_doc(f)?
+                            } else {
+                                doc! {}
+                            }
+                        } else {
+                            doc! {}
+                        }
+                    } else {
+                        doc! {}
+                    }
+                }
             };
             let replacement = match &request.pipeline {
                 Some(p) => {

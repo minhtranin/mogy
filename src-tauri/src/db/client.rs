@@ -1,10 +1,8 @@
 use mongodb::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::Mutex;
-
-const FIELD_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
 
 #[derive(Clone)]
 pub struct FieldCacheEntry {
@@ -48,32 +46,6 @@ impl MongoState {
         *self.active_connection.lock().await = None;
         // Clear field cache on disconnect
         self.field_cache.lock().await.clear();
-    }
-
-    pub fn is_cache_valid(entry: &FieldCacheEntry) -> bool {
-        entry.fetched_at.elapsed() < FIELD_CACHE_TTL
-    }
-
-    pub async fn get_cached_fields(&self, key: &str) -> Option<Vec<String>> {
-        let cache = self.field_cache.lock().await;
-        cache.get(key).and_then(|entry| {
-            if Self::is_cache_valid(entry) {
-                Some(entry.fields.clone())
-            } else {
-                None
-            }
-        })
-    }
-
-    pub async fn set_cached_fields(&self, key: String, fields: Vec<String>) {
-        let mut cache = self.field_cache.lock().await;
-        cache.insert(
-            key,
-            FieldCacheEntry {
-                fields,
-                fetched_at: Instant::now(),
-            },
-        );
     }
 
     pub async fn get_client(&self) -> Result<Client, String> {

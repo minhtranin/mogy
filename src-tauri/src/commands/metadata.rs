@@ -1,9 +1,6 @@
 use crate::db::client::{FieldCacheEntry, MongoState};
 use mongodb::bson::doc;
-use mongodb::Client;
-use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
 use tauri::State;
 
 #[tauri::command]
