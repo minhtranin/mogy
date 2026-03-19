@@ -10,6 +10,7 @@ import {
   listCollections,
   loadSession,
   saveSession,
+  refreshAllCollectionFields,
 } from "../lib/tauri-commands";
 
 export function useMongoConnection() {
@@ -58,8 +59,27 @@ export function useMongoConnection() {
   );
 
   const persistSession = useCallback(
-    (conn: string | null, db: string | null, coll: string | null, editorContent?: string | null, currentFile?: string | null) => {
-      saveSession(conn, db, coll, editorContent, currentFile).catch(() => {});
+    (
+      conn: string | null,
+      db: string | null,
+      coll: string | null,
+      editorContent?: string | null,
+      currentFile?: string | null,
+      cachedDbs?: string[] | null,
+      cachedColls?: string[] | null
+    ) => {
+      saveSession(
+        conn,
+        db,
+        coll,
+        editorContent,
+        currentFile,
+        undefined,
+        undefined,
+        undefined,
+        cachedDbs,
+        cachedColls
+      ).catch(() => {});
     },
     []
   );
@@ -72,7 +92,8 @@ export function useMongoConnection() {
         const result = await connectToServer(name);
         setActiveConnection(result.name);
 
-        const dbs = await listDatabases();
+        // Parallel fetch for databases and collections
+        const [dbs] = await Promise.all([listDatabases()]);
         setDatabases(dbs);
 
         // Auto-select database from URI if available
@@ -80,17 +101,22 @@ export function useMongoConnection() {
           setSelectedDb(result.default_database);
           setSelectedCollection(null);
           try {
-            const colls = await listCollections(result.default_database);
+            const [colls] = await Promise.all([
+              listCollections(result.default_database),
+            ]);
             setCollections(colls);
+            persistSession(result.name, result.default_database, null, null, null, dbs, colls);
+            // Warm field cache in background
+            refreshAllCollectionFields(result.default_database).catch(() => {});
           } catch {
             setCollections([]);
+            persistSession(result.name, result.default_database, null, null, null, dbs, null);
           }
-          persistSession(result.name, result.default_database, null);
         } else {
           setSelectedDb(null);
           setSelectedCollection(null);
           setCollections([]);
-          persistSession(result.name, null, null);
+          persistSession(result.name, null, null, null, null, dbs, null);
         }
       } catch (e) {
         setError(String(e));
@@ -120,14 +146,16 @@ export function useMongoConnection() {
       setSelectedDb(db);
       setSelectedCollection(null);
       try {
-        const colls = await listCollections(db);
+        const [colls] = await Promise.all([listCollections(db)]);
         setCollections(colls);
+        persistSession(activeConnection, db, null, null, null, databases, colls);
+        // Warm field cache in background
+        refreshAllCollectionFields(db).catch(() => {});
       } catch (e) {
         setError(String(e));
       }
-      persistSession(activeConnection, db, null);
     },
-    [activeConnection, persistSession]
+    [activeConnection, databases, persistSession]
   );
 
   const selectCollection = useCallback(
@@ -143,38 +171,64 @@ export function useMongoConnection() {
     try {
       const colls = await listCollections(selectedDb);
       setCollections(colls);
+      persistSession(activeConnection, selectedDb, null, null, null, databases, colls);
     } catch (e) {
       setError(String(e));
     }
-  }, [selectedDb]);
+  }, [selectedDb, activeConnection, databases, persistSession]);
 
-  // Restore session on mount
+  // Restore session on mount - optimistic restore with parallel fetch
   useEffect(() => {
     const restore = async () => {
       await refreshConnections();
       try {
         const session = await loadSession();
         if (session.connection) {
+          // Optimistic restore: immediately show cached databases/collections
+          if (session.cached_databases) {
+            setDatabases(session.cached_databases);
+          }
+          if (session.database && session.cached_collections) {
+            setSelectedDb(session.database);
+            setCollections(session.cached_collections);
+          }
+          if (session.collection) {
+            setSelectedCollection(session.collection);
+          }
+
           setLoading(true);
           try {
             const result = await connectToServer(session.connection);
             setActiveConnection(result.name);
-            const dbs = await listDatabases();
-            setDatabases(dbs);
 
+            // Parallel fetch databases and collections
+            const [dbs, colls] = await Promise.all([
+              listDatabases(),
+              session.database ? listCollections(session.database) : Promise.resolve([]),
+            ]);
+
+            setDatabases(dbs);
             const db = session.database || result.default_database;
             if (db) {
               setSelectedDb(db);
-              try {
-                const colls = await listCollections(db);
-                setCollections(colls);
-              } catch {
-                setCollections([]);
-              }
+              setCollections(colls);
+              // Warm field cache in background
+              refreshAllCollectionFields(db).catch(() => {});
             }
             if (session.collection) {
               setSelectedCollection(session.collection);
             }
+
+            // Persist with fresh caches
+            persistSession(
+              result.name,
+              db || session.database,
+              session.collection,
+              null,
+              null,
+              dbs,
+              db ? colls : null
+            );
           } catch {
             // Session connection no longer valid, ignore
           } finally {
@@ -186,43 +240,46 @@ export function useMongoConnection() {
       }
     };
     restore();
-  }, [refreshConnections]);
+  }, [refreshConnections, persistSession]);
 
-  return useMemo(() => ({
-    connections,
-    activeConnection,
-    databases,
-    collections,
-    selectedDb,
-    selectedCollection,
-    error,
-    loading,
-    refreshConnections,
-    refreshCollections,
-    addConnection,
-    removeConnection,
-    connect,
-    disconnect,
-    selectDatabase,
-    selectCollection,
-    setError,
-  }), [
-    connections,
-    activeConnection,
-    databases,
-    collections,
-    selectedDb,
-    selectedCollection,
-    error,
-    loading,
-    refreshConnections,
-    refreshCollections,
-    addConnection,
-    removeConnection,
-    connect,
-    disconnect,
-    selectDatabase,
-    selectCollection,
-    setError,
-  ]);
+  return useMemo(
+    () => ({
+      connections,
+      activeConnection,
+      databases,
+      collections,
+      selectedDb,
+      selectedCollection,
+      error,
+      loading,
+      refreshConnections,
+      refreshCollections,
+      addConnection,
+      removeConnection,
+      connect,
+      disconnect,
+      selectDatabase,
+      selectCollection,
+      setError,
+    }),
+    [
+      connections,
+      activeConnection,
+      databases,
+      collections,
+      selectedDb,
+      selectedCollection,
+      error,
+      loading,
+      refreshConnections,
+      refreshCollections,
+      addConnection,
+      removeConnection,
+      connect,
+      disconnect,
+      selectDatabase,
+      selectCollection,
+      setError,
+    ]
+  );
 }

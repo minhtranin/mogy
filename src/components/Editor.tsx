@@ -7,6 +7,7 @@ import { basicSetup, minimalSetup } from "codemirror";
 import { autocompletion, type CompletionContext, completionKeymap } from "@codemirror/autocomplete";
 import { editorSaveRef, saveAndQuitAllRef, ensureExCommands } from "../lib/vim-commands";
 import { getCmTheme, type ThemeName } from "../lib/themes";
+import { listCollectionFields } from "../lib/tauri-commands";
 
 interface EditorProps {
   focused: boolean;
@@ -18,6 +19,7 @@ interface EditorProps {
   onChange?: () => void;
   onSaveAndQuit?: () => void;
   collections?: string[];
+  selectedDb?: string | null;
 }
 
 export interface EditorHandle {
@@ -28,10 +30,11 @@ export interface EditorHandle {
   setText: (text: string) => void;
   insertAtCursor: (text: string) => void;
   setTheme: (theme: ThemeName) => void;
+  getCursorPosition: () => number;
 }
 
 export default forwardRef<EditorHandle, EditorProps>(function Editor(
-  { focused, lightweight, initialContent, theme = "mocha", onFocus, onSave, onChange, onSaveAndQuit, collections = [] },
+  { focused, lightweight, initialContent, theme = "mocha", onFocus, onSave, onChange, onSaveAndQuit, collections = [], selectedDb },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,6 +50,13 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
   onSaveAndQuitRef.current = onSaveAndQuit;
   const collectionsRef = useRef(collections);
   collectionsRef.current = collections;
+
+  // Track detected collection for field autocomplete
+  const detectedCollectionRef = useRef<string>("");
+  // Cache for collection fields
+  const fieldsCacheRef = useRef<string[]>([]);
+  // Track if we're waiting for fetch
+  const pendingFetchRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     focus() {
@@ -96,6 +106,9 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       view.dispatch({
         effects: themeCompartment.current.reconfigure(getCmTheme(theme)),
       });
+    },
+    getCursorPosition(): number {
+      return viewRef.current?.state.selection.main.head ?? 0;
     },
   }));
 
@@ -254,6 +267,98 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
           options: filtered.map(t => ({ label: t.label, type: "type", detail: t.detail, apply: t.apply })),
           validFor: /^[A-Z]\w*$/,
         };
+      }
+
+      // Field autocomplete: inside { } query context
+      const beforePos = context.pos;
+      // Limit scan to last 500 chars for performance (queries don't exceed this)
+      const scanStart = Math.max(0, beforePos - 500);
+      const scanText = fullDoc.slice(scanStart, beforePos);
+
+      // Count unclosed braces by scanning backwards (limit scan range)
+      let openBraces = 0;
+      let closeBraces = 0;
+      for (let i = scanText.length - 1; i >= 0; i--) {
+        const ch = scanText[i];
+        if (ch === '}') closeBraces++;
+        else if (ch === '{') {
+          if (closeBraces > 0) closeBraces--;
+          else openBraces++;
+        }
+      }
+      if (openBraces === 0) return null;
+
+      // Find last db.collection BEFORE cursor position using lastIndexOf (faster than regex)
+      const lastDbPos = scanText.lastIndexOf("db.");
+      if (lastDbPos === -1) return null;
+
+      const afterDb = scanText.slice(lastDbPos + 3, beforePos);
+      const fieldCollectionMatch = afterDb.match(/^(\w+)/);
+      if (!fieldCollectionMatch || !fieldCollectionMatch[1]) return null;
+      const collectionName = fieldCollectionMatch[1];
+
+      // Check if we need to fetch for this collection
+      const needsFetch = detectedCollectionRef.current !== collectionName || fieldsCacheRef.current.length === 0;
+      if (needsFetch && selectedDb) {
+        detectedCollectionRef.current = collectionName;
+        fieldsCacheRef.current = []; // Clear cache
+        pendingFetchRef.current = true;
+        // Fire-and-forget fetch
+        listCollectionFields(selectedDb, collectionName)
+          .then((fields) => {
+            fieldsCacheRef.current = fields;
+            pendingFetchRef.current = false;
+          })
+          .catch(() => {
+            fieldsCacheRef.current = [];
+            pendingFetchRef.current = false;
+          });
+      }
+
+      // Get word before cursor
+      const wordBeforeRegex = /[\w.]+$/;
+      const wordMatch = scanText.match(wordBeforeRegex);
+      const word = wordMatch ? wordMatch[0] : "";
+
+      if (word && !word.startsWith("$") && word.length > 0) {
+        const filter = word.toLowerCase();
+        // Use cached fields, or _id if waiting
+        const fields = fieldsCacheRef.current.length > 0 && !pendingFetchRef.current
+          ? fieldsCacheRef.current
+          : ["_id"];
+        const allFields = fields.length > 0 ? ["_id", ...fields] : ["_id"];
+        const filtered = allFields.filter(f => f.toLowerCase().startsWith(filter));
+        if (filtered.length > 0) {
+          return {
+            from: beforePos - word.length,
+            options: filtered.map(f => ({
+              label: f,
+              type: "property",
+              apply: f,
+            })),
+            validFor: /^[\w.]*$/,
+          };
+        }
+      }
+
+      // $field references in aggregation (inside quotes after $)
+      const dollarFieldMatch = lineText.match(/"(\$\w*)$/);
+      if (dollarFieldMatch && dollarFieldMatch[1]) {
+        const incomplete = dollarFieldMatch[1];
+        const fields = fieldsCacheRef.current.map(f => "$" + f);
+        const filter = incomplete.toLowerCase();
+        const filtered = fields.filter(f => f.toLowerCase().startsWith(filter));
+        if (filtered.length > 0) {
+          return {
+            from: context.pos - incomplete.length,
+            options: filtered.map(f => ({
+              label: f,
+              type: "property",
+              apply: f + "\"",
+            })),
+            validFor: /^\$.*/,
+          };
+        }
       }
 
       return null;

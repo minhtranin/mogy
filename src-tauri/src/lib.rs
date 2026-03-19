@@ -33,6 +33,8 @@ pub fn run() {
             commands::connection::load_settings_cmd,
             commands::metadata::list_databases,
             commands::metadata::list_collections,
+            commands::metadata::list_collection_fields,
+            commands::metadata::refresh_all_collection_fields,
             commands::query::execute_query,
             commands::query::execute_raw_query,
             commands::query::update_document,

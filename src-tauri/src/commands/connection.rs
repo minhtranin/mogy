@@ -114,6 +114,8 @@ pub async fn save_session_cmd(
     layout_direction: Option<String>,
     color_scheme: Option<String>,
     lightweight_editor: Option<bool>,
+    cached_databases: Option<Vec<String>>,
+    cached_collections: Option<Vec<String>>,
 ) -> Result<(), String> {
     session::save_session(&Session {
         connection,
@@ -124,5 +126,7 @@ pub async fn save_session_cmd(
         layout_direction,
         color_scheme,
         lightweight_editor,
+        cached_databases,
+        cached_collections,
     })
 }

@@ -70,7 +70,7 @@ export default function App() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
 
   const leaderActive = useRef(false);
-  const leaderTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const leaderTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryText = useRef("");
   const aiAbortRef = useRef<AbortController | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -144,7 +144,9 @@ export default function App() {
       currentFileRef.current,
       layoutDirectionRef.current,
       currentThemeRef.current,
-      lightweightEditorRef.current
+      lightweightEditorRef.current,
+      mongoRef.current.databases,
+      mongoRef.current.collections
     ).catch(() => {});
   }, []);
 
@@ -525,7 +527,7 @@ export default function App() {
         e.stopPropagation();
         leaderActive.current = true;
         setLeaderVisible(true);
-        clearTimeout(leaderTimeout.current);
+        clearTimeout(leaderTimeout.current ?? undefined);
         leaderTimeout.current = setTimeout(() => {
           leaderActive.current = false;
           setLeaderVisible(false);
@@ -536,7 +538,7 @@ export default function App() {
       // Leader follow-up keys
       if (leaderActive.current) {
         leaderActive.current = false;
-        clearTimeout(leaderTimeout.current);
+        clearTimeout(leaderTimeout.current ?? undefined);
         setLeaderVisible(false);
 
         if (matchesLeaderKey(e, kb["leader.connections"])) {
@@ -637,7 +639,9 @@ export default function App() {
       file,
       layoutDirectionRef.current,
       currentThemeRef.current,
-      lightweightEditorRef.current
+      lightweightEditorRef.current,
+      mongoRef.current.databases,
+      mongoRef.current.collections
     ).catch(() => {});
 
     Promise.all([fileSave, sessionSave]).then(() => {
@@ -746,6 +750,7 @@ export default function App() {
               onSaveAndQuit={handleSaveAndQuit}
               onChange={handleEditorChange}
               collections={mongo.collections}
+              selectedDb={mongo.selectedDb}
             />
           )}
         </div>

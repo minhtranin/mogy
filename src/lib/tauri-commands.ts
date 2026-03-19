@@ -29,6 +29,8 @@ export interface Session {
   layout_direction: string | null;
   color_scheme: string | null;
   lightweight_editor: boolean | null;
+  cached_databases: string[] | null;
+  cached_collections: string[] | null;
 }
 
 // Connection commands
@@ -60,14 +62,22 @@ export const saveSession = (
   currentFile?: string | null,
   layoutDirection?: string | null,
   colorScheme?: string | null,
-  lightweightEditor?: boolean | null
-) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme, lightweightEditor });
+  lightweightEditor?: boolean | null,
+  cachedDatabases?: string[] | null,
+  cachedCollections?: string[] | null
+) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme, lightweightEditor, cachedDatabases, cachedCollections });
 
 // Metadata
 export const listDatabases = () => invoke<string[]>("list_databases");
 
 export const listCollections = (db: string) =>
   invoke<string[]>("list_collections", { db });
+
+export const listCollectionFields = (db: string, collection: string) =>
+  invoke<string[]>("list_collection_fields", { db, collection });
+
+export const refreshAllCollectionFields = (db: string) =>
+  invoke<void>("refresh_all_collection_fields", { db });
 
 // Query
 export const executeRawQuery = (
@@ -122,13 +132,11 @@ export interface AIQueryResult {
   cached: boolean;
 }
 
-const MOGY_AI_URL = import.meta.env.VITE_MOGY_AI_URL || "http://18.139.3.205:6969";
-
 export async function generateAIQuery(
   prompt: string,
   signal?: AbortSignal
 ): Promise<AIQueryResult> {
-  const res = await fetch(`${MOGY_AI_URL}/api/query`, {
+  const res = await fetch("/api/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),

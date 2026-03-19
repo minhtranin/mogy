@@ -17,6 +17,10 @@ pub struct Session {
     pub color_scheme: Option<String>,
     #[serde(default)]
     pub lightweight_editor: Option<bool>,
+    #[serde(default)]
+    pub cached_databases: Option<Vec<String>>,
+    #[serde(default)]
+    pub cached_collections: Option<Vec<String>>,
 }
 
 fn session_path() -> PathBuf {
