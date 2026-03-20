@@ -643,7 +643,7 @@ export default function App() {
 
   useEffect(() => {
     loadSession()
-      .then(async (session) => {
+      .then((session) => {
         if (session.layout_direction === "horizontal" || session.layout_direction === "vertical") {
           setLayoutDirection(session.layout_direction);
         }
@@ -654,21 +654,27 @@ export default function App() {
         if (session.lightweight_editor) {
           setLightweightEditor(true);
         }
-        if (session.current_file) {
-          try {
-            const content = await loadQueryFile(session.current_file);
-            setInitialContent(content);
-            setCurrentFile(session.current_file);
-          } catch {
-            // File doesn't exist, start fresh
-          }
-        }
+        // Show editor immediately — don't block on file load
         setSessionLoaded(true);
+        // Load file content non-blocking, update editor once mounted
+        if (session.current_file) {
+          loadQueryFile(session.current_file)
+            .then((content) => {
+              setCurrentFile(session.current_file!);
+              // Editor may already be mounted; setText if so, else set initialContent
+              if (editorRef.current) {
+                editorRef.current.setText(content);
+              } else {
+                setInitialContent(content);
+              }
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {
         setSessionLoaded(true);
       });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle app close — save session then close window
   const handleAppClose = useCallback(async () => {

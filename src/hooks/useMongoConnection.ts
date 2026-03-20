@@ -200,9 +200,9 @@ export function useMongoConnection() {
   // Restore session on mount - optimistic restore with parallel fetch
   useEffect(() => {
     const restore = async () => {
-      await refreshConnections();
+      // Run refreshConnections and loadSession in parallel
+      const [, session] = await Promise.all([refreshConnections(), loadSession()]);
       try {
-        const session = await loadSession();
         if (session.connection) {
           // Optimistic restore: immediately show cached databases/collections
           if (session.cached_databases) {
