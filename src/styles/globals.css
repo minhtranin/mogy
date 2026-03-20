@@ -106,3 +106,12 @@ body {
   font-family: "JetBrains Mono", "Fira Code", monospace !important;
   font-size: 13px !important;
 }
+
+/* Lightweight mode - clearer text */
+.editor-lightweight .cm-content {
+  color: #ffffff !important;
+}
+
+.editor-lightweight .cm-line {
+  color: #ffffff !important;
+}

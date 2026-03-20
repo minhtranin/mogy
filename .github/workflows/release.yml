@@ -33,7 +33,11 @@ jobs:
           cargo tauri build --bundles deb,appimage
       - name: Generate latest.json
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # Strip 'v' prefix and fix invalid semver (remove leading zeros like 03 -> 3)
+          RAW_VERSION="${GITHUB_REF_NAME#v}"
+          # Use printf to properly format the version (removes leading zeros from patch)
+          VERSION=$(printf '%s' "$RAW_VERSION" | sed -E 's/\.0+([0-9]+)/.\1/g')
+          echo "Using version: $VERSION"
           echo "Files in appimage dir:"
           ls -la src-tauri/target/release/bundle/appimage/ || echo "appimage dir missing"
           APPIMAGE_PATH=$(ls src-tauri/target/release/bundle/appimage/*.AppImage)

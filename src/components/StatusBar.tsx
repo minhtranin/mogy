@@ -3,6 +3,7 @@ import type { PanelLayout } from "../hooks/usePanelFocus";
 import type { UpdateState } from "../hooks/useUpdater";
 
 const appWindow = getCurrentWindow();
+const APP_VERSION = "2026.19.3";
 
 interface StatusBarProps {
   activeConnection: string | null;
@@ -44,6 +45,7 @@ export default function StatusBar({
       {/* Left: connection info */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <span className="text-[var(--accent)] font-bold shrink-0">MOGY</span>
+        <span className="text-[var(--text-muted)] text-[10px] shrink-0">{APP_VERSION}</span>
         <span className="text-[var(--border)] shrink-0">|</span>
         {activeConnection ? (
           <>

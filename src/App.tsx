@@ -23,6 +23,8 @@ import {
   saveSession,
   loadSettings,
   isDirectQuery,
+  identifyCollections,
+  listCollectionFields,
   generateAIQuery,
 } from "./lib/tauri-commands";
 import { applyCssVariables, THEME_LIST, type ThemeName } from "./lib/themes";
@@ -172,7 +174,29 @@ export default function App() {
     queryRef.current.setError(null);
 
     try {
-      const res = await generateAIQuery(text, abort.signal);
+      // Step 1: Identify relevant collections
+      const identified = await identifyCollections(text, mongo.collections, abort.signal);
+      if (abort.signal.aborted) return;
+
+      // Step 2: Fetch fields for identified collections in parallel
+      const fieldsResults = await Promise.all(
+        identified.collections.map((coll) =>
+          listCollectionFields(mongo.selectedDb!, coll).catch(() => [])
+        )
+      );
+
+      // Step 3: Build fields map and call generateAIQuery
+      const collectionFields: Record<string, string[]> = {};
+      identified.collections.forEach((coll, i) => {
+        collectionFields[coll] = fieldsResults[i];
+      });
+
+      const res = await generateAIQuery(
+        text,
+        identified.collections,
+        collectionFields,
+        abort.signal
+      );
       if (abort.signal.aborted) return;
       editorRef.current?.insertAtCursor("\n" + res.query + "\n");
     } catch (e: unknown) {

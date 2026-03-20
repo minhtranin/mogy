@@ -167,6 +167,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
           { label: "$unwind", apply: "$unwind: \"$field\"" },
           { label: "$lookup", apply: "$lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n      }" },
           { label: "$addFields", apply: "$addFields: {\n        newField: \"value\"\n      }" },
+          { label: "$set", apply: "$set: {\n        newField: \"value\"\n      }" },
           { label: "$count", apply: "$count: \"total\"" },
           { label: "$facet", apply: "$facet: {\n      \n    }" },
           { label: "$bucket", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
@@ -419,7 +420,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       ref={containerRef}
       className={`h-full w-full overflow-hidden border ${
         focused ? "border-[var(--accent)]" : "border-transparent"
-      }`}
+      } ${lightweight ? "editor-lightweight" : ""}`}
       onClick={onFocus}
     />
   );

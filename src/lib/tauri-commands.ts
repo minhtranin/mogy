@@ -132,14 +132,46 @@ export interface AIQueryResult {
   cached: boolean;
 }
 
-export async function generateAIQuery(
+export interface IdentifyResult {
+  collections: string[];
+}
+
+const MOGY_AI_URL = import.meta.env.VITE_MOGY_AI_URL || "http://18.139.3.205:6969";
+
+export async function identifyCollections(
   prompt: string,
+  collections: string[],
   signal?: AbortSignal
-): Promise<AIQueryResult> {
-  const res = await fetch("/api/query", {
+): Promise<IdentifyResult> {
+  const res = await fetch(`${MOGY_AI_URL}/api/identify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, collections }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "AI service unavailable" }));
+    throw new Error(err.error || `AI error: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+export async function generateAIQuery(
+  prompt: string,
+  collections: string[],
+  collectionFields: Record<string, string[]>,
+  signal?: AbortSignal
+): Promise<AIQueryResult> {
+  const res = await fetch(`${MOGY_AI_URL}/api/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      collectionNames: collections.join(", "),
+      fields: collectionFields,
+    }),
     signal,
   });
 
