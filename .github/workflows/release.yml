@@ -56,15 +56,30 @@ jobs:
             }
           }
           EOF
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION_NO_V="${GITHUB_REF_NAME#v}"
+          # Try [Unreleased] first, then fall back to matching version
+          NOTES=$(awk '/^## \[Unreleased\]/{found=1; next} found && /^## /{exit} found{print}' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES=$(awk "/^## \[${VERSION_NO_V}\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          fi
+          if [ -z "$NOTES" ]; then
+            NOTES="See CHANGELOG.md for details."
+          fi
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
            gh release delete ${{ github.ref_name }} --yes --cleanup-tag 2>/dev/null || true
-              gh release create ${{ github.ref_name }} \
-                --title "Mogy ${{ github.ref_name }}" \
-                --generate-notes \
-                src-tauri/target/release/bundle/deb/*.deb \
-                src-tauri/target/release/bundle/appimage/*.AppImage \
-                src-tauri/target/release/bundle/appimage/*.AppImage.sig \
-                latest.json
+           gh release create ${{ github.ref_name }} \
+             --title "Mogy ${{ github.ref_name }}" \
+             --notes "${{ steps.changelog.outputs.notes }}" \
+             src-tauri/target/release/bundle/deb/*.deb \
+             src-tauri/target/release/bundle/appimage/*.AppImage \
+             src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+             latest.json
