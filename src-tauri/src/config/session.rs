@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,10 +18,15 @@ pub struct Session {
     pub color_scheme: Option<String>,
     #[serde(default)]
     pub lightweight_editor: Option<bool>,
+    /// Per-connection database lists: { connection_name -> [db, ...] }
     #[serde(default)]
-    pub cached_databases: Option<Vec<String>>,
+    pub cached_databases: Option<HashMap<String, Vec<String>>>,
+    /// Per-connection+db collection lists: { "connection::db" -> [coll, ...] }
     #[serde(default)]
-    pub cached_collections: Option<Vec<String>>,
+    pub cached_collections: Option<HashMap<String, Vec<String>>>,
+    /// Field cache: { "db.collection" -> [field, ...] }
+    #[serde(default)]
+    pub cached_fields: Option<HashMap<String, Vec<String>>>,
 }
 
 fn session_path() -> PathBuf {

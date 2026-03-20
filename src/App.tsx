@@ -26,6 +26,8 @@ import {
   identifyCollections,
   listCollectionFields,
   generateAIQuery,
+  refreshAllCollectionFields,
+  getFieldCache,
 } from "./lib/tauri-commands";
 import { applyCssVariables, THEME_LIST, type ThemeName } from "./lib/themes";
 import {
@@ -136,8 +138,11 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  const saveCurrentSession = useCallback(() => {
+  const saveCurrentSession = useCallback(async () => {
     const content = editorRef.current?.getText() ?? "";
+    const { databases: dbMap, collections: collMap } = mongoRef.current.getCachedMaps();
+    let fields: Record<string, string[]> | null = null;
+    try { fields = await getFieldCache(); } catch { /* ignore */ }
     saveSession(
       mongoRef.current.activeConnection,
       mongoRef.current.selectedDb,
@@ -147,8 +152,9 @@ export default function App() {
       layoutDirectionRef.current,
       currentThemeRef.current,
       lightweightEditorRef.current,
-      mongoRef.current.databases,
-      mongoRef.current.collections
+      Object.keys(dbMap).length ? dbMap : null,
+      Object.keys(collMap).length ? collMap : null,
+      fields && Object.keys(fields).length ? fields : null,
     ).catch(() => {});
   }, []);
 
@@ -188,7 +194,7 @@ export default function App() {
       // Step 3: Build fields map and call generateAIQuery
       const collectionFields: Record<string, string[]> = {};
       identified.collections.forEach((coll, i) => {
-        collectionFields[coll] = fieldsResults[i];
+        collectionFields[coll] = fieldsResults[i] ?? [];
       });
 
       const res = await generateAIQuery(
@@ -287,6 +293,27 @@ export default function App() {
   const closeConnections = useCallback(() => closeModalAndFocus(setShowConnections), [closeModalAndFocus]);
   const closeDatabases = useCallback(() => closeModalAndFocus(setShowDatabases), [closeModalAndFocus]);
   const closeCollections = useCallback(() => closeModalAndFocus(setShowCollections), [closeModalAndFocus]);
+  const handleRefreshCollectionFields = useCallback(async () => {
+    const db = mongoRef.current.selectedDb;
+    if (!db) return;
+    try {
+      const fields = await refreshAllCollectionFields(db);
+      const { databases: dbMap, collections: collMap } = mongoRef.current.getCachedMaps();
+      saveSession(
+        mongoRef.current.activeConnection,
+        mongoRef.current.selectedDb,
+        mongoRef.current.selectedCollection,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        Object.keys(dbMap).length ? dbMap : null,
+        Object.keys(collMap).length ? collMap : null,
+        Object.keys(fields).length ? fields : null,
+      ).catch(() => {});
+    } catch { /* ignore */ }
+  }, []);
   const closeQueryFiles = useCallback(() => closeModalAndFocus(setShowQueryFiles), [closeModalAndFocus]);
   const closeKeymap = useCallback(() => closeModalAndFocus(setShowKeymap), [closeModalAndFocus]);
   const closeCommandPalette = useCallback(() => closeModalAndFocus(setShowCommandPalette), [closeModalAndFocus]);
@@ -644,7 +671,7 @@ export default function App() {
   }, []);
 
   // Handle app close — save session then close window
-  const handleAppClose = useCallback(() => {
+  const handleAppClose = useCallback(async () => {
     const content = editorRef.current?.getText() ?? "";
     const file = currentFileRef.current;
 
@@ -654,7 +681,10 @@ export default function App() {
         ? saveQueryFile(file, content).catch(() => {})
         : Promise.resolve();
 
-    // Save session
+    // Save session (include field cache)
+    const { databases: dbMap, collections: collMap } = mongoRef.current.getCachedMaps();
+    let fields: Record<string, string[]> | null = null;
+    try { fields = await getFieldCache(); } catch { /* ignore */ }
     const sessionSave = saveSession(
       mongoRef.current.activeConnection,
       mongoRef.current.selectedDb,
@@ -664,8 +694,9 @@ export default function App() {
       layoutDirectionRef.current,
       currentThemeRef.current,
       lightweightEditorRef.current,
-      mongoRef.current.databases,
-      mongoRef.current.collections
+      Object.keys(dbMap).length ? dbMap : null,
+      Object.keys(collMap).length ? collMap : null,
+      fields && Object.keys(fields).length ? fields : null,
     ).catch(() => {});
 
     Promise.all([fileSave, sessionSave]).then(() => {
@@ -826,6 +857,7 @@ export default function App() {
           items={mongo.collections}
           onSelect={handleSelectCollection}
           selectedItem={mongo.selectedCollection}
+          onRefresh={handleRefreshCollectionFields}
         />
 
         <ListModal

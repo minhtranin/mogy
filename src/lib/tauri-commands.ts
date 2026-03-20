@@ -29,8 +29,12 @@ export interface Session {
   layout_direction: string | null;
   color_scheme: string | null;
   lightweight_editor: boolean | null;
-  cached_databases: string[] | null;
-  cached_collections: string[] | null;
+  /** { connection_name -> db[] } */
+  cached_databases: Record<string, string[]> | null;
+  /** { "connection::db" -> collection[] } */
+  cached_collections: Record<string, string[]> | null;
+  /** { "db.collection" -> field[] } */
+  cached_fields: Record<string, string[]> | null;
 }
 
 // Connection commands
@@ -63,9 +67,16 @@ export const saveSession = (
   layoutDirection?: string | null,
   colorScheme?: string | null,
   lightweightEditor?: boolean | null,
-  cachedDatabases?: string[] | null,
-  cachedCollections?: string[] | null
-) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme, lightweightEditor, cachedDatabases, cachedCollections });
+  cachedDatabases?: Record<string, string[]> | null,
+  cachedCollections?: Record<string, string[]> | null,
+  cachedFields?: Record<string, string[]> | null,
+) => invoke<void>("save_session_cmd", { connection, database, collection, lastEditorContent, currentFile, layoutDirection, colorScheme, lightweightEditor, cachedDatabases, cachedCollections, cachedFields });
+
+export const seedFieldCache = (fields: Record<string, string[]>) =>
+  invoke<void>("seed_field_cache", { fields });
+
+export const getFieldCache = () =>
+  invoke<Record<string, string[]>>("get_field_cache");
 
 // Metadata
 export const listDatabases = () => invoke<string[]>("list_databases");
@@ -77,7 +88,7 @@ export const listCollectionFields = (db: string, collection: string) =>
   invoke<string[]>("list_collection_fields", { db, collection });
 
 export const refreshAllCollectionFields = (db: string) =>
-  invoke<void>("refresh_all_collection_fields", { db });
+  invoke<Record<string, string[]>>("refresh_all_collection_fields", { db });
 
 // Query
 export const executeRawQuery = (

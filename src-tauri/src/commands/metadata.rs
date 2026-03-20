@@ -154,7 +154,7 @@ pub async fn list_collection_fields(
 pub async fn refresh_all_collection_fields(
     db: String,
     state: State<'_, MongoState>,
-) -> Result<(), String> {
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
     let client = state.get_client().await?;
     let collections = client
         .database(&db)
@@ -162,40 +162,76 @@ pub async fn refresh_all_collection_fields(
         .await
         .map_err(|e| format!("Failed to list collections: {}", e))?;
 
-    // Clone the data we need for the background task
-    let client_arc = state.client.clone();
-    let field_cache_arc = state.field_cache.clone();
-    let db_clone = db.clone();
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+    let expected_keys: std::collections::HashSet<String> = collections
+        .iter()
+        .map(|c| format!("{}.{}", db, c))
+        .collect();
+    let mut join_set = tokio::task::JoinSet::new();
 
-    // Fire and forget - spawn background task to refresh all
-    tokio::spawn(async move {
-        let client_guard = client_arc.lock().await;
-        if let Some(client) = client_guard.as_ref() {
-            for coll in collections {
-                let key = format!("{}.{}", db_clone, coll);
-                let result = client
-                    .database(&db_clone)
-                    .collection(&coll)
-                    .find_one(doc! {})
-                    .await;
+    for coll in collections {
+        let sem = semaphore.clone();
+        let client_arc = state.client.clone();
+        let db_clone = db.clone();
 
-                if let Ok(Some(doc)) = result {
-                    let mut fields = vec!["_id".to_string()];
-                    extract_fields(&doc, "", 0, &mut fields, 3, 500);
-                    let mut cache = field_cache_arc.lock().await;
-                    cache.insert(
-                        key,
-                        FieldCacheEntry {
-                            fields,
-                            fetched_at: Instant::now(),
-                        },
-                    );
-                }
+        join_set.spawn(async move {
+            let _permit = sem.acquire().await.ok()?;
+            let client_guard = client_arc.lock().await;
+            let client = client_guard.as_ref()?;
+
+            let key = format!("{}.{}", db_clone, coll);
+            let result = client
+                .database(&db_clone)
+                .collection(&coll)
+                .find_one(doc! {})
+                .await;
+
+            if let Ok(Some(doc)) = result {
+                let mut fields = vec!["_id".to_string()];
+                extract_fields(&doc, "", 0, &mut fields, 3, 500);
+                return Some((key, fields));
             }
-        }
-    });
+            None
+        });
+    }
 
+    // Collect all results
+    let mut fresh: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(Some((key, fields))) = res {
+            fresh.insert(key, fields);
+        }
+    }
+
+    // Update in-memory cache and prune stale deleted collections
+    let prefix = format!("{}.", db);
+    let mut cache = state.field_cache.lock().await;
+    cache.retain(|k, _| !k.starts_with(&prefix) || expected_keys.contains(k));
+    for (key, fields) in &fresh {
+        cache.insert(key.clone(), FieldCacheEntry { fields: fields.clone(), fetched_at: Instant::now() });
+    }
+
+    Ok(fresh)
+}
+
+#[tauri::command]
+pub async fn seed_field_cache(
+    fields: std::collections::HashMap<String, Vec<String>>,
+    state: State<'_, MongoState>,
+) -> Result<(), String> {
+    let mut cache = state.field_cache.lock().await;
+    for (key, field_list) in fields {
+        cache.insert(key, FieldCacheEntry { fields: field_list, fetched_at: Instant::now() });
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_field_cache(
+    state: State<'_, MongoState>,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let cache = state.field_cache.lock().await;
+    Ok(cache.iter().map(|(k, v)| (k.clone(), v.fields.clone())).collect())
 }
 
 #[cfg(test)]

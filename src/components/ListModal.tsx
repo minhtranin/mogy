@@ -7,6 +7,7 @@ interface ListModalProps {
   items: string[];
   onSelect: (item: string) => void;
   selectedItem?: string | null;
+  onRefresh?: () => void;
 }
 
 export default function ListModal({
@@ -16,6 +17,7 @@ export default function ListModal({
   items,
   onSelect,
   selectedItem,
+  onRefresh,
 }: ListModalProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filter, setFilter] = useState("");
@@ -48,6 +50,14 @@ export default function ListModal({
       // Close on Escape or Ctrl+[
       if (e.key === "Escape" || (e.ctrlKey && e.key === "[")) {
         onClose();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      // Ctrl+R — refresh
+      if (e.ctrlKey && e.key === "r" && onRefresh) {
+        onRefresh();
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -99,7 +109,7 @@ export default function ListModal({
             {title}
           </span>
           <span className="text-xs text-[var(--text-muted)]">
-            Enter select | Esc close
+            Enter select | Esc close{onRefresh ? " | Ctrl+R refresh" : ""}
           </span>
         </div>
 

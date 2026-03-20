@@ -35,6 +35,8 @@ pub fn run() {
             commands::metadata::list_collections,
             commands::metadata::list_collection_fields,
             commands::metadata::refresh_all_collection_fields,
+            commands::metadata::seed_field_cache,
+            commands::metadata::get_field_cache,
             commands::query::execute_query,
             commands::query::execute_raw_query,
             commands::query::update_document,

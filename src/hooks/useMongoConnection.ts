@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   type ConnectionConfig,
   listConnections,
@@ -10,7 +10,8 @@ import {
   listCollections,
   loadSession,
   saveSession,
-  refreshAllCollectionFields,
+  seedFieldCache,
+  getFieldCache,
 } from "../lib/tauri-commands";
 
 export function useMongoConnection() {
@@ -24,6 +25,10 @@ export function useMongoConnection() {
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Per-connection cache maps — kept in refs to avoid stale closures
+  const cachedDbsRef = useRef<Record<string, string[]>>({});
+  const cachedCollsRef = useRef<Record<string, string[]>>({});
 
   const refreshConnections = useCallback(async () => {
     try {
@@ -50,6 +55,13 @@ export function useMongoConnection() {
     async (name: string) => {
       try {
         await deleteConnection(name);
+        // Prune cached entries for the deleted connection
+        const { [name]: _db, ...remainingDbs } = cachedDbsRef.current;
+        cachedDbsRef.current = remainingDbs;
+        const prefix = `${name}::`;
+        cachedCollsRef.current = Object.fromEntries(
+          Object.entries(cachedCollsRef.current).filter(([k]) => !k.startsWith(prefix))
+        );
         await refreshConnections();
       } catch (e) {
         setError(String(e));
@@ -59,15 +71,26 @@ export function useMongoConnection() {
   );
 
   const persistSession = useCallback(
-    (
+    async (
       conn: string | null,
       db: string | null,
       coll: string | null,
       editorContent?: string | null,
       currentFile?: string | null,
-      cachedDbs?: string[] | null,
-      cachedColls?: string[] | null
+      newDbs?: string[] | null,
+      newColls?: string[] | null,
     ) => {
+      // Update per-connection maps
+      if (conn && newDbs) {
+        cachedDbsRef.current = { ...cachedDbsRef.current, [conn]: newDbs };
+      }
+      if (conn && db && newColls) {
+        cachedCollsRef.current = { ...cachedCollsRef.current, [`${conn}::${db}`]: newColls };
+      }
+
+      let fields: Record<string, string[]> | null = null;
+      try { fields = await getFieldCache(); } catch { /* ignore */ }
+
       saveSession(
         conn,
         db,
@@ -77,8 +100,9 @@ export function useMongoConnection() {
         undefined,
         undefined,
         undefined,
-        cachedDbs,
-        cachedColls
+        Object.keys(cachedDbsRef.current).length ? cachedDbsRef.current : null,
+        Object.keys(cachedCollsRef.current).length ? cachedCollsRef.current : null,
+        fields && Object.keys(fields).length ? fields : null,
       ).catch(() => {});
     },
     []
@@ -106,8 +130,6 @@ export function useMongoConnection() {
             ]);
             setCollections(colls);
             persistSession(result.name, result.default_database, null, null, null, dbs, colls);
-            // Warm field cache in background
-            refreshAllCollectionFields(result.default_database).catch(() => {});
           } catch {
             setCollections([]);
             persistSession(result.name, result.default_database, null, null, null, dbs, null);
@@ -149,8 +171,6 @@ export function useMongoConnection() {
         const [colls] = await Promise.all([listCollections(db)]);
         setCollections(colls);
         persistSession(activeConnection, db, null, null, null, databases, colls);
-        // Warm field cache in background
-        refreshAllCollectionFields(db).catch(() => {});
       } catch (e) {
         setError(String(e));
       }
@@ -186,14 +206,25 @@ export function useMongoConnection() {
         if (session.connection) {
           // Optimistic restore: immediately show cached databases/collections
           if (session.cached_databases) {
-            setDatabases(session.cached_databases);
+            cachedDbsRef.current = session.cached_databases;
+            const connDbs = session.cached_databases[session.connection];
+            if (connDbs) setDatabases(connDbs);
           }
           if (session.database && session.cached_collections) {
-            setSelectedDb(session.database);
-            setCollections(session.cached_collections);
+            cachedCollsRef.current = session.cached_collections;
+            const collKey = `${session.connection}::${session.database}`;
+            const connColls = session.cached_collections[collKey];
+            if (connColls) {
+              setSelectedDb(session.database);
+              setCollections(connColls);
+            }
           }
           if (session.collection) {
             setSelectedCollection(session.collection);
+          }
+          // Pre-warm in-memory field cache from session
+          if (session.cached_fields) {
+            seedFieldCache(session.cached_fields).catch(() => {});
           }
 
           setLoading(true);
@@ -212,8 +243,6 @@ export function useMongoConnection() {
             if (db) {
               setSelectedDb(db);
               setCollections(colls);
-              // Warm field cache in background
-              refreshAllCollectionFields(db).catch(() => {});
             }
             if (session.collection) {
               setSelectedCollection(session.collection);
@@ -242,6 +271,11 @@ export function useMongoConnection() {
     restore();
   }, [refreshConnections, persistSession]);
 
+  const getCachedMaps = useCallback(() => ({
+    databases: cachedDbsRef.current,
+    collections: cachedCollsRef.current,
+  }), []);
+
   return useMemo(
     () => ({
       connections,
@@ -261,6 +295,7 @@ export function useMongoConnection() {
       selectDatabase,
       selectCollection,
       setError,
+      getCachedMaps,
     }),
     [
       connections,
@@ -280,6 +315,7 @@ export function useMongoConnection() {
       selectDatabase,
       selectCollection,
       setError,
+      getCachedMaps,
     ]
   );
 }

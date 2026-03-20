@@ -114,8 +114,9 @@ pub async fn save_session_cmd(
     layout_direction: Option<String>,
     color_scheme: Option<String>,
     lightweight_editor: Option<bool>,
-    cached_databases: Option<Vec<String>>,
-    cached_collections: Option<Vec<String>>,
+    cached_databases: Option<std::collections::HashMap<String, Vec<String>>>,
+    cached_collections: Option<std::collections::HashMap<String, Vec<String>>>,
+    cached_fields: Option<std::collections::HashMap<String, Vec<String>>>,
 ) -> Result<(), String> {
     session::save_session(&Session {
         connection,
@@ -128,5 +129,6 @@ pub async fn save_session_cmd(
         lightweight_editor,
         cached_databases,
         cached_collections,
+        cached_fields,
     })
 }

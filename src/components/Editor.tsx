@@ -4,7 +4,7 @@ import { EditorState, Compartment } from "@codemirror/state";
 import { javascript } from "@codemirror/lang-javascript";
 import { vim, Vim } from "@replit/codemirror-vim";
 import { basicSetup, minimalSetup } from "codemirror";
-import { autocompletion, type CompletionContext, completionKeymap } from "@codemirror/autocomplete";
+import { autocompletion, type CompletionContext, completionKeymap, startCompletion, moveCompletionSelection } from "@codemirror/autocomplete";
 import { editorSaveRef, saveAndQuitAllRef, ensureExCommands } from "../lib/vim-commands";
 import { getCmTheme, type ThemeName } from "../lib/themes";
 import { listCollectionFields } from "../lib/tauri-commands";
@@ -50,6 +50,8 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
   onSaveAndQuitRef.current = onSaveAndQuit;
   const collectionsRef = useRef(collections);
   collectionsRef.current = collections;
+  const selectedDbRef = useRef(selectedDb);
+  selectedDbRef.current = selectedDb;
 
   // Track detected collection for field autocomplete
   const detectedCollectionRef = useRef<string>("");
@@ -299,16 +301,19 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const collectionName = fieldCollectionMatch[1];
 
       // Check if we need to fetch for this collection
+      const currentDb = selectedDbRef.current;
       const needsFetch = detectedCollectionRef.current !== collectionName || fieldsCacheRef.current.length === 0;
-      if (needsFetch && selectedDb) {
+      if (needsFetch && currentDb) {
         detectedCollectionRef.current = collectionName;
-        fieldsCacheRef.current = []; // Clear cache
+        fieldsCacheRef.current = [];
         pendingFetchRef.current = true;
-        // Fire-and-forget fetch
-        listCollectionFields(selectedDb, collectionName)
+        listCollectionFields(currentDb, collectionName)
           .then((fields) => {
             fieldsCacheRef.current = fields;
             pendingFetchRef.current = false;
+            // Re-open autocomplete with real fields
+            const view = viewRef.current;
+            if (view) startCompletion(view);
           })
           .catch(() => {
             fieldsCacheRef.current = [];
@@ -321,14 +326,23 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const wordMatch = scanText.match(wordBeforeRegex);
       const word = wordMatch ? wordMatch[0] : "";
 
-      if (word && !word.startsWith("$") && word.length > 0) {
+      if (!word.startsWith("$")) {
+        // Show loading placeholder while waiting for fields
+        if (pendingFetchRef.current) {
+          return {
+            from: beforePos - word.length,
+            options: [{ label: "loading fields...", type: "text", apply: "" }],
+            validFor: /^[\w.]*$/,
+          };
+        }
+
+        if (fieldsCacheRef.current.length === 0) return null;
+
         const filter = word.toLowerCase();
-        // Use cached fields, or _id if waiting
-        const fields = fieldsCacheRef.current.length > 0 && !pendingFetchRef.current
-          ? fieldsCacheRef.current
-          : ["_id"];
-        const allFields = fields.length > 0 ? ["_id", ...fields] : ["_id"];
-        const filtered = allFields.filter(f => f.toLowerCase().startsWith(filter));
+        const allFields = ["_id", ...fieldsCacheRef.current.filter(f => f !== "_id")];
+        const filtered = filter.length > 0
+          ? allFields.filter(f => f.toLowerCase().startsWith(filter))
+          : allFields;
         if (filtered.length > 0) {
           return {
             from: beforePos - word.length,
@@ -372,18 +386,19 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
         syntaxCompartment.current.of(lightweight ? minimalSetup : [basicSetup, javascript()]),
         themeCompartment.current.of(getCmTheme(theme)),
         autocompletion({ override: [mongoCompletion], defaultKeymap: true, activateOnTyping: true }),
-        // Add Ctrl+N/P as additional keys for navigation
-        keymap.of(completionKeymap.map((binding: any) => {
-          // Replace ArrowUp with Ctrl-p
-          if (binding.key === "ArrowUp") {
-            return { ...binding, key: "Ctrl-p" };
-          }
-          // Replace ArrowDown with Ctrl-n
-          if (binding.key === "ArrowDown") {
-            return { ...binding, key: "Ctrl-n" };
-          }
-          return binding;
-        })),
+        // Ctrl+N: navigate down if popup open, otherwise open autocomplete
+        // Ctrl+P: navigate up (only when popup open)
+        keymap.of([
+          {
+            key: "Ctrl-n",
+            run: (view) => moveCompletionSelection(true)(view) || startCompletion(view),
+          },
+          {
+            key: "Ctrl-p",
+            run: moveCompletionSelection(false),
+          },
+          ...completionKeymap.filter((b: any) => b.key !== "ArrowUp" && b.key !== "ArrowDown"),
+        ]),
         EditorView.updateListener.of((update) => {
           if (update.focusChanged && update.view.hasFocus) {
             onFocus();
