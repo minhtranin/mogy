@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - 2026-03-20
+## [2026.20.3] - 2026-03-20
 
 ### Features
 - **Per-connection session cache**: Databases and collections are now cached per connection name, so switching between multiple connections preserves cached data for each
