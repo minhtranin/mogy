@@ -74,12 +74,13 @@ jobs:
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.changelog.outputs.notes }}
         run: |
-           gh release delete ${{ github.ref_name }} --yes --cleanup-tag 2>/dev/null || true
-           gh release create ${{ github.ref_name }} \
-             --title "Mogy ${{ github.ref_name }}" \
-             --notes "${{ steps.changelog.outputs.notes }}" \
-             src-tauri/target/release/bundle/deb/*.deb \
-             src-tauri/target/release/bundle/appimage/*.AppImage \
-             src-tauri/target/release/bundle/appimage/*.AppImage.sig \
-             latest.json
+          gh release delete ${{ github.ref_name }} --yes --cleanup-tag 2>/dev/null || true
+          gh release create ${{ github.ref_name }} \
+            --title "Mogy ${{ github.ref_name }}" \
+            --notes "$RELEASE_NOTES" \
+            src-tauri/target/release/bundle/deb/*.deb \
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+            latest.json
