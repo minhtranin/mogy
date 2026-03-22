@@ -154,33 +154,132 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const lineText = line.text.slice(0, context.pos - line.from);
       const fullDoc = context.state.doc.toString();
 
-      // Check for $ inside aggregate pipeline - show aggregate stages
-      // Check for $ inside aggregate pipeline - show aggregate stages
+      // Check for $ operators — show all MongoDB operators
       const aggregateStageMatch = lineText.match(/\$(\w*)$/);
       if (aggregateStageMatch) {
         const incomplete = aggregateStageMatch[1] || "";
-        const stages = [
-          { label: "$match", apply: "$match: {\n      \n    }" },
-          { label: "$group", apply: "$group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }" },
-          { label: "$project", apply: "$project: {\n      field: 1\n    }" },
-          { label: "$sort", apply: "$sort: {\n      field: 1\n    }" },
-          { label: "$limit", apply: "$limit: 20" },
-          { label: "$skip", apply: "$skip: 0" },
-          { label: "$unwind", apply: "$unwind: \"$field\"" },
-          { label: "$lookup", apply: "$lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n      }" },
-          { label: "$addFields", apply: "$addFields: {\n        newField: \"value\"\n      }" },
-          { label: "$set", apply: "$set: {\n        newField: \"value\"\n      }" },
-          { label: "$count", apply: "$count: \"total\"" },
-          { label: "$facet", apply: "$facet: {\n      \n    }" },
-          { label: "$bucket", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
-          { label: "$out", apply: "$out: \"collection\"" },
-          { label: "$merge", apply: "$merge: {\n      into: \"collection\"\n    }" },
-          { label: "$addToSet", apply: "$addToSet: \"$field\"" },
+        const operators = [
+          // Pipeline stages
+          { label: "$match", detail: "stage", apply: "$match: {\n      \n    }" },
+          { label: "$group", detail: "stage", apply: "$group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }" },
+          { label: "$project", detail: "stage", apply: "$project: {\n      field: 1\n    }" },
+          { label: "$sort", detail: "stage", apply: "$sort: {\n      field: 1\n    }" },
+          { label: "$limit", detail: "stage", apply: "$limit: 20" },
+          { label: "$skip", detail: "stage", apply: "$skip: 0" },
+          { label: "$unwind", detail: "stage", apply: "$unwind: \"$field\"" },
+          { label: "$lookup", detail: "stage", apply: "$lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n      }" },
+          { label: "$graphLookup", detail: "stage", apply: "$graphLookup: {\n        from: \"collection\",\n        startWith: \"$field\",\n        connectFromField: \"field\",\n        connectToField: \"_id\",\n        as: \"result\"\n      }" },
+          { label: "$unionWith", detail: "stage", apply: "$unionWith: \"collection\"" },
+          { label: "$addFields", detail: "stage", apply: "$addFields: {\n        newField: \"value\"\n      }" },
+          { label: "$set", detail: "stage/update", apply: "$set: {\n        field: \"value\"\n      }" },
+          { label: "$unset", detail: "stage/update", apply: "$unset: \"field\"" },
+          { label: "$replaceRoot", detail: "stage", apply: "$replaceRoot: { newRoot: \"$field\" }" },
+          { label: "$replaceWith", detail: "stage", apply: "$replaceWith: \"$field\"" },
+          { label: "$count", detail: "stage/accum", apply: "$count: \"total\"" },
+          { label: "$facet", detail: "stage", apply: "$facet: {\n      \n    }" },
+          { label: "$bucket", detail: "stage", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
+          { label: "$bucketAuto", detail: "stage", apply: "$bucketAuto: {\n        groupBy: \"$field\",\n        buckets: 5\n      }" },
+          { label: "$sortByCount", detail: "stage", apply: "$sortByCount: \"$field\"" },
+          { label: "$sample", detail: "stage", apply: "$sample: { size: 10 }" },
+          { label: "$out", detail: "stage", apply: "$out: \"collection\"" },
+          { label: "$merge", detail: "stage", apply: "$merge: {\n      into: \"collection\"\n    }" },
+          // Comparison operators
+          { label: "$eq", detail: "comparison", apply: "$eq: " },
+          { label: "$ne", detail: "comparison", apply: "$ne: " },
+          { label: "$gt", detail: "comparison", apply: "$gt: " },
+          { label: "$gte", detail: "comparison", apply: "$gte: " },
+          { label: "$lt", detail: "comparison", apply: "$lt: " },
+          { label: "$lte", detail: "comparison", apply: "$lte: " },
+          { label: "$in", detail: "comparison", apply: "$in: []" },
+          { label: "$nin", detail: "comparison", apply: "$nin: []" },
+          { label: "$cmp", detail: "comparison", apply: "$cmp: [\"$a\", \"$b\"]" },
+          // Logical operators
+          { label: "$and", detail: "logical", apply: "$and: [{}]" },
+          { label: "$or", detail: "logical", apply: "$or: [{}]" },
+          { label: "$not", detail: "logical", apply: "$not: {}" },
+          { label: "$nor", detail: "logical", apply: "$nor: [{}]" },
+          // Element operators
+          { label: "$exists", detail: "element", apply: "$exists: true" },
+          { label: "$type", detail: "element", apply: "$type: \"string\"" },
+          // Evaluation operators
+          { label: "$expr", detail: "evaluation", apply: "$expr: {}" },
+          { label: "$regex", detail: "evaluation", apply: "$regex: //" },
+          { label: "$text", detail: "evaluation", apply: "$text: { $search: \"\" }" },
+          { label: "$where", detail: "evaluation", apply: "$where: \"\"" },
+          { label: "$mod", detail: "evaluation", apply: "$mod: [, 0]" },
+          { label: "$jsonSchema", detail: "evaluation", apply: "$jsonSchema: {}" },
+          // Array query operators
+          { label: "$all", detail: "array", apply: "$all: []" },
+          { label: "$elemMatch", detail: "array", apply: "$elemMatch: {}" },
+          { label: "$size", detail: "array", apply: "$size: " },
+          // Aggregation expressions — arithmetic
+          { label: "$add", detail: "arithmetic", apply: "$add: [\"$a\", \"$b\"]" },
+          { label: "$subtract", detail: "arithmetic", apply: "$subtract: [\"$a\", \"$b\"]" },
+          { label: "$multiply", detail: "arithmetic", apply: "$multiply: [\"$a\", \"$b\"]" },
+          { label: "$divide", detail: "arithmetic", apply: "$divide: [\"$a\", \"$b\"]" },
+          // String expressions
+          { label: "$concat", detail: "string", apply: "$concat: [\"$a\", \"$b\"]" },
+          { label: "$substr", detail: "string", apply: "$substr: [\"$field\", 0, 5]" },
+          { label: "$substrBytes", detail: "string", apply: "$substrBytes: [\"$field\", 0, 5]" },
+          { label: "$substrCP", detail: "string", apply: "$substrCP: [\"$field\", 0, 5]" },
+          { label: "$toLower", detail: "string", apply: "$toLower: \"$field\"" },
+          { label: "$toUpper", detail: "string", apply: "$toUpper: \"$field\"" },
+          { label: "$trim", detail: "string", apply: "$trim: { input: \"$field\" }" },
+          { label: "$ltrim", detail: "string", apply: "$ltrim: { input: \"$field\" }" },
+          { label: "$rtrim", detail: "string", apply: "$rtrim: { input: \"$field\" }" },
+          { label: "$split", detail: "string", apply: "$split: [\"$field\", \",\"]" },
+          // Array expressions
+          { label: "$arrayElemAt", detail: "array expr", apply: "$arrayElemAt: [\"$field\", 0]" },
+          { label: "$concatArrays", detail: "array expr", apply: "$concatArrays: [\"$a\", \"$b\"]" },
+          { label: "$filter", detail: "array expr", apply: "$filter: {\n        input: \"$field\",\n        as: \"item\",\n        cond: {}\n      }" },
+          { label: "$map", detail: "array expr", apply: "$map: {\n        input: \"$field\",\n        as: \"item\",\n        in: \"$$item\"\n      }" },
+          { label: "$reduce", detail: "array expr", apply: "$reduce: {\n        input: \"$field\",\n        initialValue: 0,\n        in: {}\n      }" },
+          { label: "$slice", detail: "array expr", apply: "$slice: [\"$field\", 5]" },
+          // Conditional expressions
+          { label: "$cond", detail: "conditional", apply: "$cond: {\n        if: {},\n        then: \"\",\n        else: \"\"\n      }" },
+          { label: "$ifNull", detail: "conditional", apply: "$ifNull: [\"$field\", \"default\"]" },
+          { label: "$switch", detail: "conditional", apply: "$switch: {\n        branches: [\n          { case: {}, then: \"\" }\n        ],\n        default: \"\"\n      }" },
+          // Date expressions
+          { label: "$dateToString", detail: "date", apply: "$dateToString: { format: \"%Y-%m-%d\", date: \"$field\" }" },
+          { label: "$dateFromString", detail: "date", apply: "$dateFromString: { dateString: \"\" }" },
+          { label: "$year", detail: "date", apply: "$year: \"$field\"" },
+          { label: "$month", detail: "date", apply: "$month: \"$field\"" },
+          { label: "$dayOfMonth", detail: "date", apply: "$dayOfMonth: \"$field\"" },
+          { label: "$now", detail: "date", apply: "$now" },
+          // Type/conversion expressions
+          { label: "$toString", detail: "type", apply: "$toString: \"$field\"" },
+          { label: "$toInt", detail: "type", apply: "$toInt: \"$field\"" },
+          { label: "$toDouble", detail: "type", apply: "$toDouble: \"$field\"" },
+          { label: "$toBool", detail: "type", apply: "$toBool: \"$field\"" },
+          { label: "$convert", detail: "type", apply: "$convert: { input: \"$field\", to: \"string\" }" },
+          // Accumulators (used in $group)
+          { label: "$sum", detail: "accumulator", apply: "$sum: 1" },
+          { label: "$avg", detail: "accumulator", apply: "$avg: \"$field\"" },
+          { label: "$min", detail: "accumulator", apply: "$min: \"$field\"" },
+          { label: "$max", detail: "accumulator", apply: "$max: \"$field\"" },
+          { label: "$push", detail: "accumulator/update", apply: "$push: \"$field\"" },
+          { label: "$addToSet", detail: "accumulator/update", apply: "$addToSet: \"$field\"" },
+          { label: "$first", detail: "accumulator", apply: "$first: \"$field\"" },
+          { label: "$last", detail: "accumulator", apply: "$last: \"$field\"" },
+          // Update operators
+          { label: "$inc", detail: "update", apply: "$inc: { field: 1 }" },
+          { label: "$mul", detail: "update", apply: "$mul: { field: 2 }" },
+          { label: "$rename", detail: "update", apply: "$rename: { oldField: \"newField\" }" },
+          { label: "$pop", detail: "update", apply: "$pop: { field: 1 }" },
+          { label: "$pull", detail: "update", apply: "$pull: { field: \"value\" }" },
+          { label: "$pullAll", detail: "update", apply: "$pullAll: { field: [] }" },
+          { label: "$each", detail: "update modifier", apply: "$each: []" },
+          { label: "$position", detail: "update modifier", apply: "$position: 0" },
+          { label: "$bit", detail: "update", apply: "$bit: { field: { and: 0 } }" },
+          // Special
+          { label: "$hint", detail: "special", apply: "$hint: {}" },
+          { label: "$comment", detail: "special", apply: "$comment: \"\"" },
+          { label: "$meta", detail: "special", apply: "$meta: \"textScore\"" },
         ];
         const filterStr = incomplete ? "$" + incomplete.toLowerCase() : "$";
-        const filtered = stages.filter(s => s.label.toLowerCase().startsWith(filterStr));
+        const filtered = operators.filter(s => s.label.toLowerCase().startsWith(filterStr));
         return {
-          from: context.pos - incomplete.length - 1, // -1 to exclude the $ from replacement
+          from: context.pos - incomplete.length - 1,
           options: filtered,
           validFor: /^\$.*/,
         };
@@ -220,15 +319,6 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
           { label: "replaceOne", type: "function", detail: "(filter, doc)", apply: "replaceOne({}, {})" },
           { label: "count", type: "function", detail: "(query?)", apply: "count({})" },
           { label: "aggregate", type: "function", detail: "([pipeline])", apply: "aggregate([\n    {\n      $match: {\n        \n      }\n    }\n])" },
-          { label: "$match", type: "function", detail: "$match", apply: "{\n    $match: {\n      \n    }\n}" },
-          { label: "$group", type: "function", detail: "$group", apply: "{\n    $group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }\n}" },
-          { label: "$project", type: "function", detail: "$project", apply: "{\n    $project: {\n      field: 1\n    }\n}" },
-          { label: "$sort", type: "function", detail: "$sort", apply: "{\n    $sort: {\n      field: 1\n    }\n}" },
-          { label: "$limit", type: "function", detail: "$limit", apply: "{ $limit: 20 }" },
-          { label: "$skip", type: "function", detail: "$skip", apply: "{ $skip: 0 }" },
-          { label: "$unwind", type: "function", detail: "$unwind", apply: "{\n    $unwind: \"$field\"\n}" },
-          { label: "$lookup", type: "function", detail: "$lookup", apply: "{\n    $lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n    }\n}" },
-          { label: "$addToSet", type: "function", detail: "$addToSet", apply: "{ $addToSet: \"$field\" }" },
           { label: "distinct", type: "function", detail: "(field, query?)", apply: "distinct(\"\")" },
           { label: "findOneAndUpdate", type: "function", detail: "(filter, update)", apply: "findOneAndUpdate({}, {$set:{}})" },
           { label: "findOneAndDelete", type: "function", detail: "(query)", apply: "findOneAndDelete({})" },
