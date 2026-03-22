@@ -20,6 +20,8 @@ pub enum QueryType {
     FindOneAndUpdate,
     FindOneAndDelete,
     FindOneAndReplace,
+    CountDocuments,
+    EstimatedDocumentCount,
     Other,
 }
 
@@ -95,6 +97,30 @@ fn json_value_to_bson(val: &serde_json::Value) -> bson::Bson {
                         return bson::Bson::Decimal128(d);
                     }
                 }
+                if let Some(ts_obj) = map.get("$timestamp").and_then(|v| v.as_object()) {
+                    let t = ts_obj.get("t").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    let inc = ts_obj.get("i").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    return bson::Bson::Timestamp(bson::Timestamp { time: t, increment: inc });
+                }
+                if let Some(s) = map.get("$uuid").and_then(|v| v.as_str()) {
+                    // Store UUID as string since bson crate doesn't have a native UUID type
+                    let uuid_doc = doc! { "$uuid": s };
+                    return bson::Bson::Document(uuid_doc);
+                }
+                if let Some(re_obj) = map.get("$regularExpression").and_then(|v| v.as_object()) {
+                    let pattern = re_obj.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+                    let options = re_obj.get("options").and_then(|v| v.as_str()).unwrap_or("");
+                    return bson::Bson::RegularExpression(bson::Regex {
+                        pattern: pattern.to_string(),
+                        options: options.to_string(),
+                    });
+                }
+                if map.get("$minKey").is_some() {
+                    return bson::Bson::MinKey;
+                }
+                if map.get("$maxKey").is_some() {
+                    return bson::Bson::MaxKey;
+                }
             }
             let doc: Document = map
                 .iter()
@@ -131,65 +157,451 @@ fn json_to_bson_doc(val: &serde_json::Value) -> Result<Document, String> {
     }
 }
 
+/// Strip JS-style comments: // line comments and /* block comments */
+fn strip_comments(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    while i < len {
+        // Inside a string: handle escapes and closing quote
+        if in_single_quote || in_double_quote {
+            if chars[i] == '\\' && i + 1 < len {
+                result.push(chars[i]);
+                result.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if !in_double_quote && chars[i] == '\'' {
+                in_single_quote = false;
+            }
+            if !in_single_quote && chars[i] == '"' {
+                in_double_quote = false;
+            }
+            result.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        // Track string context to avoid stripping inside strings
+        if chars[i] == '\'' {
+            in_single_quote = true;
+            result.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        if chars[i] == '"' {
+            in_double_quote = true;
+            result.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        // Line comment: // ... \n
+        if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' {
+            // Skip to end of line
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Block comment: /* ... */
+        if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            if i + 1 < len {
+                i += 2; // skip */
+            }
+            continue;
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
 /// Preprocess MongoDB shell helpers like ObjectId('...'), new Date('...'), ISODate('...')
 /// into extended JSON that json5 can parse.
 fn preprocess_mongo_helpers(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
     let len = chars.len();
+    // Build char-index → byte-offset map for safe string slicing with multi-byte chars
+    let bo: Vec<usize> = input.char_indices().map(|(b, _)| b).chain(std::iter::once(input.len())).collect();
     let mut i = 0;
 
+    // Safe substring comparison: chars[ci..ci+n] matches s
+    let matches_at = |ci: usize, s: &str| -> bool {
+        ci + s.len() <= len && &input[bo[ci]..bo[ci + s.len()]] == s
+    };
+
     while i < len {
-        // Check for ObjectId('...')
-        if i + 9 <= len && &input[i..i + 9] == "ObjectId(" {
-            if let Some((value, end)) = extract_helper_arg(&chars, i + 9) {
+        // Skip "new " prefix — handle "new ObjectId(...)", "new Date(...)"
+        let after_new = if matches_at(i, "new ") { i + 4 } else { i };
+
+        // ObjectId('...')
+        if matches_at(after_new, "ObjectId(") {
+            let arg_start = after_new + 9;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
                 result.push_str(&format!(r#"{{"$oid":"{}"}}"#, value));
                 i = end;
                 continue;
             }
         }
-        // Check for new Date('...')
-        if i + 9 <= len && &input[i..i + 9] == "new Date(" {
-            if let Some((value, end)) = extract_helper_arg(&chars, i + 9) {
+
+        // Date('...') or Date() or Date(millis)
+        if matches_at(after_new, "Date(") {
+            let arg_start = after_new + 5;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
                 result.push_str(&format!(r#"{{"$date":"{}"}}"#, value));
                 i = end;
                 continue;
             }
-        }
-        // Check for ISODate('...')
-        if i + 8 <= len && &input[i..i + 8] == "ISODate(" {
-            if let Some((value, end)) = extract_helper_arg(&chars, i + 8) {
-                result.push_str(&format!(r#"{{"$date":"{}"}}"#, value));
+            if let Some((value, end)) = extract_numeric_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$date":{{"$numberLong":"{}"}}}}"#, value));
+                i = end;
+                continue;
+            }
+            if let Some(end) = extract_empty_arg(&chars, arg_start) {
+                let now = bson::DateTime::now();
+                let iso = now.try_to_rfc3339_string().unwrap_or_default();
+                result.push_str(&format!(r#"{{"$date":"{}"}}"#, iso));
                 i = end;
                 continue;
             }
         }
-        // Check for NumberLong('...')
-        if i + 11 <= len && &input[i..i + 11] == "NumberLong(" {
-            if let Some((value, end)) = extract_helper_arg(&chars, i + 11) {
+
+        // ISODate('...') or ISODate()
+        if matches_at(after_new, "ISODate(") {
+            let arg_start = after_new + 8;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$date":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+            if let Some(end) = extract_empty_arg(&chars, arg_start) {
+                let now = bson::DateTime::now();
+                let iso = now.try_to_rfc3339_string().unwrap_or_default();
+                result.push_str(&format!(r#"{{"$date":"{}"}}"#, iso));
+                i = end;
+                continue;
+            }
+        }
+
+        // Timestamp(t, i)
+        if matches_at(after_new, "Timestamp(") {
+            let arg_start = after_new + 10;
+            if let Some((t, inc, end)) = extract_two_numeric_args(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$timestamp":{{"t":{},"i":{}}}}}"#, t, inc));
+                i = end;
+                continue;
+            }
+            if let Some(end) = extract_empty_arg(&chars, arg_start) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                result.push_str(&format!(r#"{{"$timestamp":{{"t":{},"i":1}}}}"#, now));
+                i = end;
+                continue;
+            }
+        }
+
+        // NumberLong('...') or NumberLong(123)
+        if matches_at(after_new, "NumberLong(") {
+            let arg_start = after_new + 11;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+            if let Some((value, end)) = extract_numeric_arg(&chars, arg_start) {
                 result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
                 i = end;
                 continue;
             }
         }
-        // Check for Long('...')
-        if i + 5 <= len && &input[i..i + 5] == "Long(" {
-            if let Some((value, end)) = extract_helper_arg(&chars, i + 5) {
-                result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
+
+        // Long('...') or Long(123)
+        if matches_at(after_new, "Long(") {
+            // Avoid matching "NumberLong(" — check preceding char
+            let prev_byte = if after_new > 0 { bo[after_new] - 1 } else { 0 };
+            if after_new == 0 || !input.as_bytes()[prev_byte].is_ascii_alphanumeric() {
+                let arg_start = after_new + 5;
+                if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
+                    result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
+                    i = end;
+                    continue;
+                }
+                if let Some((value, end)) = extract_numeric_arg(&chars, arg_start) {
+                    result.push_str(&format!(r#"{{"$numberLong":"{}"}}"#, value));
+                    i = end;
+                    continue;
+                }
+            }
+        }
+
+        // NumberInt(123) or NumberInt('...')
+        if matches_at(after_new, "NumberInt(") {
+            let arg_start = after_new + 10;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$numberInt":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+            if let Some((value, end)) = extract_numeric_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$numberInt":"{}"}}"#, value));
                 i = end;
                 continue;
             }
         }
-        // Check for NumberDecimal('...')
-        if i + 14 <= len && &input[i..i + 14] == "NumberDecimal(" {
-            if let Some((value, end)) = extract_helper_arg(&chars, i + 14) {
+
+        // NumberDecimal('...') or NumberDecimal(123.45)
+        if matches_at(after_new, "NumberDecimal(") {
+            let arg_start = after_new + 14;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$numberDecimal":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+            if let Some((value, end)) = extract_numeric_arg(&chars, arg_start) {
                 result.push_str(&format!(r#"{{"$numberDecimal":"{}"}}"#, value));
                 i = end;
                 continue;
             }
         }
-        result.push(chars[i]);
+
+        // UUID('...')
+        if matches_at(after_new, "UUID(") {
+            let arg_start = after_new + 5;
+            if let Some((value, end)) = extract_helper_arg(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$uuid":"{}"}}"#, value));
+                i = end;
+                continue;
+            }
+        }
+
+        // BinData(subtype, 'base64...')
+        if matches_at(after_new, "BinData(") {
+            let arg_start = after_new + 8;
+            if let Some((subtype, data, end)) = extract_bindata_args(&chars, arg_start) {
+                result.push_str(&format!(r#"{{"$binary":{{"base64":"{}","subType":"{}"}}}}"#, data, subtype));
+                i = end;
+                continue;
+            }
+        }
+
+        // MinKey (no parens) or MinKey()
+        if matches_at(after_new, "MinKey") {
+            let after_kw = after_new + 6;
+            let is_word_end = after_kw >= len || !chars[after_kw].is_ascii_alphanumeric();
+            if is_word_end {
+                result.push_str(r#"{"$minKey":1}"#);
+                i = after_kw;
+                // Skip optional ()
+                if matches_at(i, "()") {
+                    i += 2;
+                }
+                continue;
+            }
+        }
+
+        // MaxKey (no parens) or MaxKey()
+        if matches_at(after_new, "MaxKey") {
+            let after_kw = after_new + 6;
+            let is_word_end = after_kw >= len || !chars[after_kw].is_ascii_alphanumeric();
+            if is_word_end {
+                result.push_str(r#"{"$maxKey":1}"#);
+                i = after_kw;
+                if matches_at(i, "()") {
+                    i += 2;
+                }
+                continue;
+            }
+        }
+
+        // RegExp('pattern', 'flags') or RegExp('pattern')
+        if matches_at(after_new, "RegExp(") {
+            let arg_start = after_new + 7;
+            if let Some((pattern, flags, end)) = extract_regexp_args(&chars, arg_start) {
+                result.push_str(&format!(
+                    r#"{{"$regularExpression":{{"pattern":"{}","options":"{}"}}}}"#,
+                    escape_json_string(&pattern),
+                    flags
+                ));
+                i = end;
+                continue;
+            }
+        }
+
+        // Regex literal: /pattern/flags — only in value position (after : or , or [ or start)
+        if chars[i] == '/' && !in_regex_unlikely_position(&result) {
+            if let Some((pattern, flags, end)) = extract_regex_literal(&chars, i) {
+                result.push_str(&format!(
+                    r#"{{"$regularExpression":{{"pattern":"{}","options":"{}"}}}}"#,
+                    escape_json_string(&pattern),
+                    flags
+                ));
+                i = end;
+                continue;
+            }
+        }
+
+        // No match — if we consumed "new " but nothing matched, emit it as-is
+        if after_new != i {
+            result.push_str("new ");
+            i = after_new;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Check if `/` is likely division, not regex start.
+/// Returns true if the last non-whitespace char suggests division (number, identifier end, closing bracket).
+fn in_regex_unlikely_position(preceding: &str) -> bool {
+    let last = preceding.trim_end().chars().last();
+    matches!(last, Some(')') | Some(']') | Some('0'..='9'))
+}
+
+/// Extract regex literal /pattern/flags
+fn extract_regex_literal(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    if start >= chars.len() || chars[start] != '/' {
+        return None;
+    }
+    let mut i = start + 1;
+    let mut pattern = String::new();
+    let mut escaped = false;
+
+    // Read pattern (handle escaped /)
+    while i < chars.len() {
+        if escaped {
+            pattern.push(chars[i]);
+            escaped = false;
+        } else if chars[i] == '\\' {
+            pattern.push('\\');
+            escaped = true;
+        } else if chars[i] == '/' {
+            break;
+        } else if chars[i] == '\n' {
+            return None; // regex can't span lines
+        } else {
+            pattern.push(chars[i]);
+        }
         i += 1;
+    }
+    if i >= chars.len() || chars[i] != '/' {
+        return None;
+    }
+    if pattern.is_empty() {
+        return None; // empty regex `/` `/` is likely not a regex
+    }
+    i += 1; // skip closing /
+
+    // Read flags
+    let mut flags = String::new();
+    while i < chars.len() && chars[i].is_ascii_alphabetic() {
+        flags.push(chars[i]);
+        i += 1;
+    }
+    // Sort flags alphabetically (MongoDB convention)
+    let mut flag_chars: Vec<char> = flags.chars().collect();
+    flag_chars.sort();
+    let flags: String = flag_chars.into_iter().collect();
+
+    Some((pattern, flags, i))
+}
+
+/// Extract RegExp('pattern', 'flags') or RegExp('pattern')
+fn extract_regexp_args(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    // First arg: pattern (quoted string)
+    let (pattern, after_pattern) = {
+        let mut i = start;
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= chars.len() {
+            return None;
+        }
+        let quote = chars[i];
+        if quote != '\'' && quote != '"' {
+            return None;
+        }
+        i += 1;
+        let mut val = String::new();
+        while i < chars.len() && chars[i] != quote {
+            val.push(chars[i]);
+            i += 1;
+        }
+        if i >= chars.len() {
+            return None;
+        }
+        i += 1; // skip closing quote
+        (val, i)
+    };
+
+    let mut i = after_pattern;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+
+    // Check for optional second arg (flags)
+    if i < chars.len() && chars[i] == ',' {
+        i += 1;
+        // Extract flags string
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= chars.len() {
+            return None;
+        }
+        let quote = chars[i];
+        if quote != '\'' && quote != '"' {
+            return None;
+        }
+        i += 1;
+        let mut flags = String::new();
+        while i < chars.len() && chars[i] != quote {
+            flags.push(chars[i]);
+            i += 1;
+        }
+        if i >= chars.len() {
+            return None;
+        }
+        i += 1; // skip closing quote
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i < chars.len() && chars[i] == ')' {
+            Some((pattern, flags, i + 1))
+        } else {
+            None
+        }
+    } else if i < chars.len() && chars[i] == ')' {
+        Some((pattern, String::new(), i + 1))
+    } else {
+        None
+    }
+}
+
+/// Escape a string for JSON embedding (handle backslashes and double quotes)
+fn escape_json_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\t' => result.push_str("\\t"),
+            '\r' => result.push_str("\\r"),
+            _ => result.push(c),
+        }
     }
     result
 }
@@ -198,20 +610,17 @@ fn preprocess_mongo_helpers(input: &str) -> String {
 /// Returns (value, position after closing paren)
 fn extract_helper_arg(chars: &[char], start: usize) -> Option<(String, usize)> {
     let mut i = start;
-    // Skip whitespace
     while i < chars.len() && chars[i].is_whitespace() {
         i += 1;
     }
     if i >= chars.len() {
         return None;
     }
-
     let quote = chars[i];
     if quote != '\'' && quote != '"' {
         return None;
     }
     i += 1;
-
     let mut value = String::new();
     while i < chars.len() && chars[i] != quote {
         value.push(chars[i]);
@@ -221,8 +630,6 @@ fn extract_helper_arg(chars: &[char], start: usize) -> Option<(String, usize)> {
         return None;
     }
     i += 1; // skip closing quote
-
-    // Skip whitespace and closing paren
     while i < chars.len() && chars[i].is_whitespace() {
         i += 1;
     }
@@ -231,6 +638,113 @@ fn extract_helper_arg(chars: &[char], start: usize) -> Option<(String, usize)> {
     } else {
         None
     }
+}
+
+/// Extract empty argument: just whitespace then closing paren — e.g. ObjectId(), new Date()
+fn extract_empty_arg(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i < chars.len() && chars[i] == ')' {
+        Some(i + 1)
+    } else {
+        None
+    }
+}
+
+/// Extract a numeric argument (int or float, possibly negative) — e.g. NumberLong(123), Date(1234567890000)
+fn extract_numeric_arg(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut i = start;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    let num_start = i;
+    if i < chars.len() && chars[i] == '-' {
+        i += 1;
+    }
+    let mut has_digits = false;
+    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+        has_digits = true;
+        i += 1;
+    }
+    if !has_digits {
+        return None;
+    }
+    let value: String = chars[num_start..i].iter().collect();
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i < chars.len() && chars[i] == ')' {
+        Some((value, i + 1))
+    } else {
+        None
+    }
+}
+
+/// Extract two numeric args — e.g. Timestamp(1234567890, 1)
+fn extract_two_numeric_args(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let (first, after_first) = extract_numeric_arg_no_close(chars, start)?;
+    let mut i = after_first;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] != ',' {
+        return None;
+    }
+    i += 1; // skip comma
+    let (second, after_second) = extract_numeric_arg_no_close(chars, i)?;
+    let mut j = after_second;
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    if j < chars.len() && chars[j] == ')' {
+        Some((first, second, j + 1))
+    } else {
+        None
+    }
+}
+
+/// Helper: extract numeric value without consuming closing paren
+fn extract_numeric_arg_no_close(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut i = start;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    let num_start = i;
+    if i < chars.len() && chars[i] == '-' {
+        i += 1;
+    }
+    let mut has_digits = false;
+    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+        has_digits = true;
+        i += 1;
+    }
+    if !has_digits {
+        return None;
+    }
+    let value: String = chars[num_start..i].iter().collect();
+    Some((value, i))
+}
+
+/// Extract BinData args — e.g. BinData(0, 'base64string')
+fn extract_bindata_args(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let (subtype, after_sub) = extract_numeric_arg_no_close(chars, start)?;
+    let mut i = after_sub;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] != ',' {
+        return None;
+    }
+    i += 1; // skip comma
+    let (data, end) = extract_helper_arg_inner(chars, i)?;
+    Some((subtype, data, end))
+}
+
+/// Like extract_helper_arg but reusable — extracts quoted string + closing paren
+fn extract_helper_arg_inner(chars: &[char], start: usize) -> Option<(String, usize)> {
+    extract_helper_arg(chars, start)
 }
 
 /// Convert a BSON document to serde_json::Value with dates as ISO strings
@@ -264,6 +778,14 @@ fn bson_to_json_value(val: &bson::Bson) -> serde_json::Value {
         bson::Bson::Int64(n) => serde_json::json!({"$numberLong": n.to_string()}),
         bson::Bson::Double(f) => serde_json::json!(f),
         bson::Bson::Decimal128(d) => serde_json::json!({"$numberDecimal": d.to_string()}),
+        bson::Bson::RegularExpression(re) => {
+            serde_json::json!({"$regularExpression": {"pattern": re.pattern, "options": re.options}})
+        }
+        bson::Bson::Timestamp(ts) => {
+            serde_json::json!({"$timestamp": {"t": ts.time, "i": ts.increment}})
+        }
+        bson::Bson::MinKey => serde_json::json!({"$minKey": 1}),
+        bson::Bson::MaxKey => serde_json::json!({"$maxKey": 1}),
         // Fall back to default serialization for other types
         other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
     }
@@ -531,18 +1053,12 @@ pub async fn execute_query(
             })
         }
         QueryType::UpdateOne => {
-            // Extract filter from $match stage if filter is None (for UpdateOne, filter is in pipeline)
             let filter = match &request.filter {
                 Some(f) => json_to_bson_doc(f)?,
                 None => {
-                    // Try to get filter from $match in pipeline
                     if let Some(pipeline) = &request.pipeline {
-                        if let Some(stage) = pipeline.iter().find_map(|s| s.get("$match")) {
-                            if let Some(f) = stage.get("$match") {
-                                json_to_bson_doc(f)?
-                            } else {
-                                doc! {}
-                            }
+                        if let Some(filter_val) = pipeline.iter().find_map(|s| s.get("$match")) {
+                            json_to_bson_doc(filter_val)?
                         } else {
                             doc! {}
                         }
@@ -553,7 +1069,6 @@ pub async fn execute_query(
             };
             let update = match &request.pipeline {
                 Some(p) => {
-                    // Extract $set from pipeline
                     p.iter()
                         .find_map(|stage| stage.get("$set"))
                         .map(|v| json_to_bson_doc(v))
@@ -589,18 +1104,12 @@ pub async fn execute_query(
             })
         }
         QueryType::UpdateMany => {
-            // Extract filter from $match stage if filter is None (for UpdateMany, filter is in pipeline)
             let filter = match &request.filter {
                 Some(f) => json_to_bson_doc(f)?,
                 None => {
-                    // Try to get filter from $match in pipeline
                     if let Some(pipeline) = &request.pipeline {
-                        if let Some(stage) = pipeline.iter().find_map(|s| s.get("$match")) {
-                            if let Some(f) = stage.get("$match") {
-                                json_to_bson_doc(f)?
-                            } else {
-                                doc! {}
-                            }
+                        if let Some(filter_val) = pipeline.iter().find_map(|s| s.get("$match")) {
+                            json_to_bson_doc(filter_val)?
                         } else {
                             doc! {}
                         }
@@ -646,18 +1155,12 @@ pub async fn execute_query(
             })
         }
         QueryType::ReplaceOne => {
-            // Extract filter from $match stage if filter is None (for ReplaceOne, filter is in pipeline)
             let filter = match &request.filter {
                 Some(f) => json_to_bson_doc(f)?,
                 None => {
-                    // Try to get filter from $match in pipeline
                     if let Some(pipeline) = &request.pipeline {
-                        if let Some(stage) = pipeline.iter().find_map(|s| s.get("$match")) {
-                            if let Some(f) = stage.get("$match") {
-                                json_to_bson_doc(f)?
-                            } else {
-                                doc! {}
-                            }
+                        if let Some(filter_val) = pipeline.iter().find_map(|s| s.get("$match")) {
+                            json_to_bson_doc(filter_val)?
                         } else {
                             doc! {}
                         }
@@ -708,8 +1211,13 @@ pub async fn execute_query(
                 None => doc! {},
             };
 
+            let field_name = request.sort
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .unwrap_or("_id");
+
             let docs = collection
-                .distinct("null", filter)
+                .distinct(field_name, filter)
                 .await
                 .map_err(|e| format!("Distinct failed: {}", e))?;
 
@@ -839,6 +1347,40 @@ pub async fn execute_query(
                 page_size: 1,
             })
         }
+        QueryType::CountDocuments => {
+            // countDocuments() uses the same count_documents driver method as Count
+            let filter = match &request.filter {
+                Some(f) => json_to_bson_doc(f)?,
+                None => doc! {},
+            };
+
+            let count = collection
+                .count_documents(filter)
+                .await
+                .map_err(|e| format!("CountDocuments failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "count": count })],
+                has_more: false,
+                query_type: QueryType::CountDocuments,
+                page: 1,
+                page_size: 1,
+            })
+        }
+        QueryType::EstimatedDocumentCount => {
+            let count = collection
+                .estimated_document_count()
+                .await
+                .map_err(|e| format!("EstimatedDocumentCount failed: {}", e))?;
+
+            Ok(QueryResult {
+                documents: vec![serde_json::json!({ "count": count })],
+                has_more: false,
+                query_type: QueryType::EstimatedDocumentCount,
+                page: 1,
+                page_size: 1,
+            })
+        }
         QueryType::Other => {
             Err("Unsupported query type".to_string())
         }
@@ -853,6 +1395,7 @@ pub async fn execute_raw_query(
     page_size: Option<u64>,
     state: State<'_, MongoState>,
 ) -> Result<QueryResult, String> {
+    let query_text = strip_comments(query_text.trim());
     let query_text = query_text.trim();
     let mut parsed = parse_query_string(query_text)?;
     parsed.args = preprocess_mongo_helpers(&parsed.args);
@@ -996,20 +1539,25 @@ pub async fn execute_raw_query(
         QueryType::UpdateOne | QueryType::UpdateMany | QueryType::ReplaceOne => {
             // Args format: {filter}, {update}
             let parts = split_top_level_args(&parsed.args);
-            let filter: Option<serde_json::Value> = if parts.is_empty() || parts[0].trim().is_empty() || parts[0].trim() == "{}" {
+            if parts.len() < 2 || parts[1].trim().is_empty() {
+                let method = match parsed.query_type {
+                    QueryType::UpdateOne => "updateOne",
+                    QueryType::UpdateMany => "updateMany",
+                    QueryType::ReplaceOne => "replaceOne",
+                    _ => "update",
+                };
+                return Err(format!("{} requires both a filter and an update/replacement document", method));
+            }
+            let filter: Option<serde_json::Value> = if parts[0].trim().is_empty() || parts[0].trim() == "{}" {
                 None
             } else {
                 Some(json5::from_str(&parts[0]).map_err(|e| {
                     format!("Invalid filter: {}. Input: {}", e, parts[0])
                 })?)
             };
-            let update: Option<serde_json::Value> = if parts.len() > 1 && !parts[1].trim().is_empty() {
-                Some(json5::from_str(&parts[1]).map_err(|e| {
-                    format!("Invalid update: {}. Input: {}", e, parts[1])
-                })?)
-            } else {
-                None
-            };
+            let update: Option<serde_json::Value> = Some(json5::from_str(&parts[1]).map_err(|e| {
+                format!("Invalid update: {}. Input: {}", e, parts[1])
+            })?);
             // Combine filter and update into a single document for pipeline
             let pipeline: Option<Vec<serde_json::Value>> = Some(vec![
                 serde_json::json!({ "$match": filter }),
@@ -1028,14 +1576,22 @@ pub async fn execute_raw_query(
             }
         }
         QueryType::Distinct => {
-            let filter: Option<serde_json::Value> =
-                if parsed.args.is_empty() || parsed.args == "{}" {
-                    None
-                } else {
-                    Some(json5::from_str(&parsed.args).map_err(|e| {
-                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
-                    })?)
-                };
+            // distinct("fieldName") or distinct("fieldName", {filter})
+            let parts = split_top_level_args(&parsed.args);
+            let field_name = parts.first()
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                .unwrap_or_default();
+            if field_name.is_empty() {
+                return Err("distinct() requires a field name argument".to_string());
+            }
+            let filter: Option<serde_json::Value> = if parts.len() > 1 && !parts[1].trim().is_empty() && parts[1].trim() != "{}" {
+                Some(json5::from_str(&parts[1]).map_err(|e| {
+                    format!("Invalid filter: {}. Input: {}", e, parts[1])
+                })?)
+            } else {
+                None
+            };
+            // Pass field name through sort field (unused for distinct)
             QueryRequest {
                 db,
                 collection: parsed.collection,
@@ -1044,7 +1600,7 @@ pub async fn execute_raw_query(
                 pipeline: None,
                 page: None,
                 page_size: None,
-                sort: None,
+                sort: Some(serde_json::Value::String(field_name)),
                 projection: None,
             }
         }
@@ -1097,9 +1653,43 @@ pub async fn execute_raw_query(
                 projection: update,
             }
         }
+        QueryType::CountDocuments => {
+            let filter: Option<serde_json::Value> =
+                if parsed.args.is_empty() || parsed.args == "{}" {
+                    None
+                } else {
+                    Some(json5::from_str(&parsed.args).map_err(|e| {
+                        format!("Invalid filter: {}. Input: {}", e, parsed.args)
+                    })?)
+                };
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: QueryType::CountDocuments,
+                filter,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
+        QueryType::EstimatedDocumentCount => {
+            QueryRequest {
+                db,
+                collection: parsed.collection,
+                query_type: QueryType::EstimatedDocumentCount,
+                filter: None,
+                pipeline: None,
+                page: None,
+                page_size: None,
+                sort: None,
+                projection: None,
+            }
+        }
         QueryType::Other => {
             return Err(format!(
-                "Unsupported method: {}. Supported methods: find, findOne, aggregate, count, distinct, insertOne, insertMany, updateOne, updateMany, replaceOne, deleteOne, deleteMany, findOneAndUpdate, findOneAndDelete, findOneAndReplace",
+                "Unsupported method: {}. Supported methods: find, findOne, aggregate, count, countDocuments, estimatedDocumentCount, distinct, insertOne, insertMany, updateOne, updateMany, replaceOne, deleteOne, deleteMany, findOneAndUpdate, findOneAndDelete, findOneAndReplace",
                 query_text
             ));
         }
@@ -1148,6 +1738,7 @@ struct ParsedQuery {
     sort: Option<String>,
     projection: Option<String>,
     limit: Option<i64>,
+    collation: Option<String>,
 }
 
 fn find_matching_close(input: &str, start: usize) -> Option<usize> {
@@ -1203,15 +1794,15 @@ fn split_top_level_args(input: &str) -> Vec<String> {
     let mut in_string = false;
     let mut string_char = '"';
     let mut current = String::new();
+    let mut escaped = false;
 
-    for (i, ch) in input.chars().enumerate() {
+    for ch in input.chars() {
         if in_string {
             current.push(ch);
-            if ch == '\\' {
-                // peek next char
-                if let Some(next) = input.chars().nth(i + 1) {
-                    let _ = next;
-                }
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
             } else if ch == string_char {
                 in_string = false;
             }
@@ -1288,15 +1879,20 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
         "findOneAndUpdate" => QueryType::FindOneAndUpdate,
         "findOneAndDelete" => QueryType::FindOneAndDelete,
         "findOneAndReplace" => QueryType::FindOneAndReplace,
+        "countDocuments" => QueryType::CountDocuments,
+        "estimatedDocumentCount" => QueryType::EstimatedDocumentCount,
         _ => QueryType::Other,
     };
 
     let mut sort = None;
     let mut projection = None;
     let mut limit = None;
+    let mut collation = None;
 
-    if matches!(query_type, QueryType::Find) {
-        let remainder = &after_db[close_pos + 1..];
+    // Parse method chains (.sort(), .limit(), .skip(), .projection(), .collation())
+    // Supported on Find and other read operations
+    if matches!(query_type, QueryType::Find | QueryType::FindOne | QueryType::Count | QueryType::CountDocuments) {
+        let remainder = &method_part[close_pos + 1..];
         let mut rest = remainder;
 
         while let Some(dot_pos) = rest.find('.') {
@@ -1331,6 +1927,21 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
                 } else {
                     break;
                 }
+            } else if rest.starts_with("collation(") {
+                let paren_start = rest.find('(').unwrap();
+                if let Some(close) = find_matching_close(rest, paren_start) {
+                    collation = Some(rest[paren_start + 1..close].trim().to_string());
+                    rest = &rest[close + 1..];
+                } else {
+                    break;
+                }
+            } else if rest.starts_with("toArray(") || rest.starts_with("explain(") {
+                // Silently skip — toArray is implicit, explain not yet supported
+                if let Some(close) = rest.find(')') {
+                    rest = &rest[close + 1..];
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -1344,6 +1955,7 @@ fn parse_query_string(query: &str) -> Result<ParsedQuery, String> {
         sort,
         projection,
         limit,
+        collation,
     })
 }
 
@@ -1397,6 +2009,265 @@ mod tests {
         let input = r#"{name: "test", age: 25}"#;
         let result = preprocess_mongo_helpers(input);
         assert_eq!(result, input);
+    }
+
+    // ─── preprocess: new ObjectId ───
+
+    #[test]
+    fn preprocess_new_objectid() {
+        let input = r#"{_id: new ObjectId('507f1f77bcf86cd799439011')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$oid":"507f1f77bcf86cd799439011"}"#));
+        assert!(!result.contains("new ObjectId"));
+    }
+
+    // ─── preprocess: new Date() empty (current time) ───
+
+    #[test]
+    fn preprocess_new_date_empty() {
+        let result = preprocess_mongo_helpers(r#"{created: new Date()}"#);
+        assert!(result.contains(r#"{"$date":"#));
+        assert!(!result.contains("new Date"));
+    }
+
+    #[test]
+    fn preprocess_isodate_empty() {
+        let result = preprocess_mongo_helpers(r#"{created: ISODate()}"#);
+        assert!(result.contains(r#"{"$date":"#));
+        assert!(!result.contains("ISODate"));
+    }
+
+    // ─── preprocess: Date(millis) ───
+
+    #[test]
+    fn preprocess_new_date_millis() {
+        let result = preprocess_mongo_helpers(r#"{created: new Date(1724054400000)}"#);
+        assert!(result.contains(r#"{"$date":{"$numberLong":"1724054400000"}}"#));
+        assert!(!result.contains("new Date"));
+    }
+
+    // ─── preprocess: NumberInt ───
+
+    #[test]
+    fn preprocess_number_int_string() {
+        let result = preprocess_mongo_helpers(r#"{count: NumberInt('42')}"#);
+        assert!(result.contains(r#"{"$numberInt":"42"}"#));
+        assert!(!result.contains("NumberInt"));
+    }
+
+    #[test]
+    fn preprocess_number_int_numeric() {
+        let result = preprocess_mongo_helpers(r#"{count: NumberInt(42)}"#);
+        assert!(result.contains(r#"{"$numberInt":"42"}"#));
+    }
+
+    // ─── preprocess: NumberLong numeric arg ───
+
+    #[test]
+    fn preprocess_number_long_numeric() {
+        let result = preprocess_mongo_helpers(r#"{count: NumberLong(9999)}"#);
+        assert!(result.contains(r#"{"$numberLong":"9999"}"#));
+    }
+
+    // ─── preprocess: NumberDecimal numeric arg ───
+
+    #[test]
+    fn preprocess_number_decimal_numeric() {
+        let result = preprocess_mongo_helpers(r#"{price: NumberDecimal(99.99)}"#);
+        assert!(result.contains(r#"{"$numberDecimal":"99.99"}"#));
+    }
+
+    // ─── preprocess: Timestamp ───
+
+    #[test]
+    fn preprocess_timestamp() {
+        let result = preprocess_mongo_helpers(r#"{ts: Timestamp(1724054400, 1)}"#);
+        assert!(result.contains(r#"{"$timestamp":{"t":1724054400,"i":1}}"#));
+        assert!(!result.contains("Timestamp"));
+    }
+
+    #[test]
+    fn preprocess_timestamp_empty() {
+        let result = preprocess_mongo_helpers(r#"{ts: Timestamp()}"#);
+        assert!(result.contains(r#"{"$timestamp":{"t":"#));
+        assert!(!result.contains("Timestamp()"));
+    }
+
+    // ─── preprocess: UUID ───
+
+    #[test]
+    fn preprocess_uuid() {
+        let result = preprocess_mongo_helpers(r#"{uid: UUID('550e8400-e29b-41d4-a716-446655440000')}"#);
+        assert!(result.contains(r#"{"$uuid":"550e8400-e29b-41d4-a716-446655440000"}"#));
+        assert!(!result.contains("UUID("));
+    }
+
+    // ─── preprocess: BinData ───
+
+    #[test]
+    fn preprocess_bindata() {
+        let result = preprocess_mongo_helpers(r#"{data: BinData(0, 'SGVsbG8=')}"#);
+        assert!(result.contains(r#"{"$binary":{"base64":"SGVsbG8=","subType":"0"}}"#));
+        assert!(!result.contains("BinData"));
+    }
+
+    // ─── preprocess: MinKey / MaxKey ───
+
+    #[test]
+    fn preprocess_minkey() {
+        let result = preprocess_mongo_helpers(r#"{low: MinKey}"#);
+        assert!(result.contains(r#"{"$minKey":1}"#));
+        assert!(!result.contains("MinKey}"));
+    }
+
+    #[test]
+    fn preprocess_maxkey() {
+        let result = preprocess_mongo_helpers(r#"{high: MaxKey}"#);
+        assert!(result.contains(r#"{"$maxKey":1}"#));
+        assert!(!result.contains("MaxKey}"));
+    }
+
+    #[test]
+    fn preprocess_minkey_with_parens() {
+        let result = preprocess_mongo_helpers(r#"{low: MinKey()}"#);
+        assert!(result.contains(r#"{"$minKey":1}"#));
+    }
+
+    #[test]
+    fn preprocess_maxkey_with_parens() {
+        let result = preprocess_mongo_helpers(r#"{high: MaxKey()}"#);
+        assert!(result.contains(r#"{"$maxKey":1}"#));
+    }
+
+    // ─── preprocess: Long() should not match NumberLong ───
+
+    #[test]
+    fn preprocess_long_does_not_eat_numberlong() {
+        let input = r#"{a: NumberLong('123'), b: Long('456')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$numberLong":"123"}"#));
+        assert!(result.contains(r#"{"$numberLong":"456"}"#));
+    }
+
+    // ─── preprocess: mixed helpers in one doc ───
+
+    #[test]
+    fn preprocess_all_helpers_combined() {
+        let input = r#"{
+            _id: ObjectId('507f1f77bcf86cd799439011'),
+            created: new Date('2024-01-15T10:30:00.000Z'),
+            updated: ISODate('2026-08-31T07:00:00.000Z'),
+            count: NumberLong(100),
+            price: NumberDecimal('99.99'),
+            rank: NumberInt(5),
+            ts: Timestamp(1724054400, 1),
+            uid: UUID('550e8400-e29b-41d4-a716-446655440000'),
+            low: MinKey,
+            high: MaxKey
+        }"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains(r#"{"$oid":"507f1f77bcf86cd799439011"}"#));
+        assert!(result.contains(r#"{"$date":"2024-01-15T10:30:00.000Z"}"#));
+        assert!(result.contains(r#"{"$date":"2026-08-31T07:00:00.000Z"}"#));
+        assert!(result.contains(r#"{"$numberLong":"100"}"#));
+        assert!(result.contains(r#"{"$numberDecimal":"99.99"}"#));
+        assert!(result.contains(r#"{"$numberInt":"5"}"#));
+        assert!(result.contains(r#"{"$timestamp":{"t":1724054400,"i":1}}"#));
+        assert!(result.contains(r#"{"$uuid":"550e8400-e29b-41d4-a716-446655440000"}"#));
+        assert!(result.contains(r#"{"$minKey":1}"#));
+        assert!(result.contains(r#"{"$maxKey":1}"#));
+    }
+
+    // ─── json_value_to_bson: Timestamp ───
+
+    #[test]
+    fn json_to_bson_timestamp() {
+        let json: serde_json::Value = serde_json::json!({"$timestamp": {"t": 1724054400, "i": 1}});
+        let bson = json_value_to_bson(&json);
+        if let bson::Bson::Timestamp(ts) = bson {
+            assert_eq!(ts.time, 1724054400);
+            assert_eq!(ts.increment, 1);
+        } else {
+            panic!("Expected Timestamp, got {:?}", bson);
+        }
+    }
+
+    // ─── json_value_to_bson: MinKey / MaxKey ───
+
+    #[test]
+    fn json_to_bson_minkey() {
+        let json: serde_json::Value = serde_json::json!({"$minKey": 1});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::MinKey));
+    }
+
+    #[test]
+    fn json_to_bson_maxkey() {
+        let json: serde_json::Value = serde_json::json!({"$maxKey": 1});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::MaxKey));
+    }
+
+    // ─── json_value_to_bson: NumberInt ───
+
+    #[test]
+    fn json_to_bson_number_int() {
+        let json: serde_json::Value = serde_json::json!({"$numberInt": "42"});
+        let bson = json_value_to_bson(&json);
+        assert!(matches!(bson, bson::Bson::Int32(42)));
+    }
+
+    // ─── save pipeline: new helpers ───
+
+    #[test]
+    fn save_pipeline_new_date_empty() {
+        let input = r#"{"created": new Date()}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("created"), Some(bson::Bson::DateTime(_))));
+    }
+
+    #[test]
+    fn save_pipeline_isodate_empty() {
+        let input = r#"{"created": ISODate()}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("created"), Some(bson::Bson::DateTime(_))));
+    }
+
+    #[test]
+    fn save_pipeline_number_int() {
+        let input = r#"{"rank": NumberInt(5)}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("rank"), Some(bson::Bson::Int32(5))));
+    }
+
+    #[test]
+    fn save_pipeline_timestamp() {
+        let input = r#"{"ts": Timestamp(1724054400, 1)}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        if let Some(bson::Bson::Timestamp(ts)) = doc.get("ts") {
+            assert_eq!(ts.time, 1724054400);
+            assert_eq!(ts.increment, 1);
+        } else {
+            panic!("Expected Timestamp");
+        }
+    }
+
+    #[test]
+    fn save_pipeline_minkey_maxkey() {
+        let input = r#"{"low": MinKey, "high": MaxKey}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("low"), Some(bson::Bson::MinKey)));
+        assert!(matches!(doc.get("high"), Some(bson::Bson::MaxKey)));
     }
 
     // ─── json_value_to_bson: ObjectId ───
@@ -2003,5 +2874,433 @@ mod tests {
     fn parse_no_parens_errors() {
         let result = parse_query_string("db.users.find");
         assert!(result.is_err());
+    }
+
+    // ─── preprocess: RegExp ───
+
+    #[test]
+    fn preprocess_regexp_pattern_only() {
+        let result = preprocess_mongo_helpers(r#"{name: RegExp('test')}"#);
+        assert!(result.contains(r#"{"$regularExpression":{"pattern":"test","options":""}}"#));
+        assert!(!result.contains("RegExp("));
+    }
+
+    #[test]
+    fn preprocess_regexp_with_flags() {
+        let result = preprocess_mongo_helpers(r#"{name: RegExp('test', 'i')}"#);
+        assert!(result.contains(r#"{"$regularExpression":{"pattern":"test","options":"i"}}"#));
+    }
+
+    #[test]
+    fn preprocess_regexp_double_quotes() {
+        let result = preprocess_mongo_helpers(r#"{name: RegExp("^hello", "im")}"#);
+        assert!(result.contains(r#"{"$regularExpression":{"pattern":"^hello","options":"im"}}"#));
+    }
+
+    // ─── preprocess: regex literal ───
+
+    #[test]
+    fn preprocess_regex_literal_simple() {
+        let result = preprocess_mongo_helpers(r#"{name: /test/i}"#);
+        assert!(result.contains(r#"{"$regularExpression":{"pattern":"test","options":"i"}}"#));
+    }
+
+    #[test]
+    fn preprocess_regex_literal_no_flags() {
+        let result = preprocess_mongo_helpers(r#"{name: /^hello/}"#);
+        assert!(result.contains(r#"{"$regularExpression":{"pattern":"^hello","options":""}}"#));
+    }
+
+    #[test]
+    fn preprocess_regex_literal_multiple_flags() {
+        let result = preprocess_mongo_helpers(r#"{name: /test/gim}"#);
+        // Flags should be sorted
+        assert!(result.contains(r#""options":"gim""#));
+    }
+
+    #[test]
+    fn preprocess_regex_literal_escaped_slash() {
+        let result = preprocess_mongo_helpers(r#"{path: /a\/b/}"#);
+        assert!(result.contains(r#""pattern":"a\\/b""#));
+    }
+
+    // ─── json_value_to_bson: RegularExpression ───
+
+    #[test]
+    fn json_to_bson_regex() {
+        let json: serde_json::Value = serde_json::json!({"$regularExpression": {"pattern": "test", "options": "i"}});
+        let bson = json_value_to_bson(&json);
+        if let bson::Bson::RegularExpression(re) = bson {
+            assert_eq!(re.pattern, "test");
+            assert_eq!(re.options, "i");
+        } else {
+            panic!("Expected RegularExpression, got {:?}", bson);
+        }
+    }
+
+    // ─── bson_to_json_value: RegularExpression round-trip ───
+
+    #[test]
+    fn roundtrip_regex() {
+        let bson_val = bson::Bson::RegularExpression(bson::Regex {
+            pattern: "test".to_string(),
+            options: "i".to_string(),
+        });
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$regularExpression": {"pattern": "test", "options": "i"}}));
+        let back = json_value_to_bson(&json);
+        if let bson::Bson::RegularExpression(re) = back {
+            assert_eq!(re.pattern, "test");
+            assert_eq!(re.options, "i");
+        } else {
+            panic!("Expected RegularExpression, got {:?}", back);
+        }
+    }
+
+    // ─── save pipeline: regex ───
+
+    #[test]
+    fn save_pipeline_regexp() {
+        let input = r#"{"name": RegExp('hello', 'i')}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        if let Some(bson::Bson::RegularExpression(re)) = doc.get("name") {
+            assert_eq!(re.pattern, "hello");
+            assert_eq!(re.options, "i");
+        } else {
+            panic!("Expected RegularExpression");
+        }
+    }
+
+    #[test]
+    fn save_pipeline_regex_literal() {
+        let input = r#"{"name": /^test/i}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        if let Some(bson::Bson::RegularExpression(re)) = doc.get("name") {
+            assert_eq!(re.pattern, "^test");
+            assert_eq!(re.options, "i");
+        } else {
+            panic!("Expected RegularExpression");
+        }
+    }
+
+    // ─── roundtrip: Timestamp ───
+
+    #[test]
+    fn roundtrip_timestamp() {
+        let bson_val = bson::Bson::Timestamp(bson::Timestamp { time: 1724054400, increment: 1 });
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$timestamp": {"t": 1724054400, "i": 1}}));
+        let back = json_value_to_bson(&json);
+        if let bson::Bson::Timestamp(ts) = back {
+            assert_eq!(ts.time, 1724054400);
+            assert_eq!(ts.increment, 1);
+        } else {
+            panic!("Expected Timestamp, got {:?}", back);
+        }
+    }
+
+    // ─── roundtrip: MinKey / MaxKey ───
+
+    #[test]
+    fn roundtrip_minkey() {
+        let bson_val = bson::Bson::MinKey;
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$minKey": 1}));
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::MinKey));
+    }
+
+    #[test]
+    fn roundtrip_maxkey() {
+        let bson_val = bson::Bson::MaxKey;
+        let json = bson_to_json_value(&bson_val);
+        assert_eq!(json, serde_json::json!({"$maxKey": 1}));
+        let back = json_value_to_bson(&json);
+        assert!(matches!(back, bson::Bson::MaxKey));
+    }
+
+    // ─── strip_comments ───
+
+    #[test]
+    fn strip_line_comment() {
+        let input = "db.users.find({}) // find all users";
+        let result = strip_comments(input);
+        assert_eq!(result.trim(), "db.users.find({})");
+    }
+
+    #[test]
+    fn strip_block_comment() {
+        let input = "db.users.find(/* filter */ {})";
+        let result = strip_comments(input);
+        assert_eq!(result, "db.users.find( {})");
+    }
+
+    #[test]
+    fn strip_multiline_block_comment() {
+        let input = "db.users.find(\n/* \n  multi\n  line\n*/\n{})";
+        let result = strip_comments(input);
+        assert_eq!(result, "db.users.find(\n\n{})");
+    }
+
+    #[test]
+    fn strip_comments_preserves_strings() {
+        let input = r#"db.users.find({url: "http://example.com"})"#;
+        let result = strip_comments(input);
+        assert_eq!(result, input); // URL inside string should not be stripped
+    }
+
+    #[test]
+    fn strip_comments_preserves_single_quote_strings() {
+        let input = "db.users.find({url: 'http://example.com'})";
+        let result = strip_comments(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn strip_mixed_comments() {
+        let input = "// header comment\ndb.users.find({}) /* trailing */";
+        let result = strip_comments(input);
+        assert_eq!(result.trim(), "db.users.find({})");
+    }
+
+    // ─── parse_query_string: countDocuments / estimatedDocumentCount ───
+
+    #[test]
+    fn parse_count_documents() {
+        let parsed = parse_query_string("db.users.countDocuments({active: true})").unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::CountDocuments));
+        assert!(parsed.args.contains("active"));
+    }
+
+    #[test]
+    fn parse_count_documents_empty() {
+        let parsed = parse_query_string("db.users.countDocuments({})").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::CountDocuments));
+    }
+
+    #[test]
+    fn parse_count_documents_no_args() {
+        let parsed = parse_query_string("db.users.countDocuments()").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::CountDocuments));
+        assert!(parsed.args.is_empty());
+    }
+
+    #[test]
+    fn parse_estimated_document_count() {
+        let parsed = parse_query_string("db.users.estimatedDocumentCount()").unwrap();
+        assert_eq!(parsed.collection, "users");
+        assert!(matches!(parsed.query_type, QueryType::EstimatedDocumentCount));
+    }
+
+    // ─── parse_query_string: collation chain ───
+
+    #[test]
+    fn parse_find_with_collation() {
+        let parsed = parse_query_string(r#"db.users.find({}).collation({locale: "en", strength: 2})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert!(parsed.collation.is_some());
+        assert!(parsed.collation.as_ref().unwrap().contains("locale"));
+    }
+
+    // ─── parse_query_string: toArray / explain are silently skipped ───
+
+    #[test]
+    fn parse_find_with_toarray() {
+        let parsed = parse_query_string("db.users.find({}).toArray()").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+    }
+
+    #[test]
+    fn parse_find_with_explain() {
+        let parsed = parse_query_string("db.users.find({}).explain()").unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+    }
+
+    #[test]
+    fn parse_find_full_chain() {
+        let parsed = parse_query_string(r#"db.users.find({}).sort({name: 1}).limit(10).collation({locale: "en"}).toArray()"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.sort.as_deref(), Some("{name: 1}"));
+        assert_eq!(parsed.limit, Some(10));
+        assert!(parsed.collation.is_some());
+    }
+
+    // ─── parse_query_string: countDocuments with chain ───
+
+    #[test]
+    fn parse_count_documents_with_collation() {
+        let parsed = parse_query_string(r#"db.users.countDocuments({}).collation({locale: "fr"})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::CountDocuments));
+        assert!(parsed.collation.is_some());
+    }
+
+    // ─── regex: not matching division ───
+
+    #[test]
+    fn regex_not_after_number() {
+        // 10/2 should not be treated as regex
+        let result = preprocess_mongo_helpers(r#"{result: 10/2}"#);
+        assert!(!result.contains("$regularExpression"));
+    }
+
+    #[test]
+    fn regex_not_after_paren() {
+        // (a)/b should not be treated as regex
+        let result = preprocess_mongo_helpers(r#"{result: (a)/b}"#);
+        assert!(!result.contains("$regularExpression"));
+    }
+
+    // ─── json_value_to_bson: UUID ───
+
+    #[test]
+    fn json_to_bson_uuid() {
+        let json: serde_json::Value = serde_json::json!({"$uuid": "550e8400-e29b-41d4-a716-446655440000"});
+        let bson = json_value_to_bson(&json);
+        // UUID is stored as a Document with $uuid key
+        if let bson::Bson::Document(doc) = bson {
+            assert!(doc.get_str("$uuid").is_ok());
+        } else {
+            panic!("Expected Document with $uuid, got {:?}", bson);
+        }
+    }
+
+    // ─── json_value_to_bson: BinData / $binary ───
+
+    #[test]
+    fn save_pipeline_bindata() {
+        let input = r#"{"data": BinData(0, 'SGVsbG8=')}"#;
+        let preprocessed = preprocess_mongo_helpers(input);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        assert!(json.get("data").unwrap().get("$binary").is_some());
+    }
+
+    // ─── full pipeline: comments + helpers ───
+
+    #[test]
+    fn full_pipeline_with_comments() {
+        let input = r#"// Find active users
+{active: true, created: new Date('2024-01-15T00:00:00Z') /* after jan */}"#;
+        let stripped = strip_comments(input);
+        let preprocessed = preprocess_mongo_helpers(&stripped);
+        let json: serde_json::Value = json5::from_str(&preprocessed).unwrap();
+        let doc = json_to_bson_doc(&json).unwrap();
+        assert!(matches!(doc.get("active"), Some(bson::Bson::Boolean(true))));
+        assert!(matches!(doc.get("created"), Some(bson::Bson::DateTime(_))));
+    }
+
+    // ─── new RegExp ───
+
+    #[test]
+    fn preprocess_new_regexp() {
+        let result = preprocess_mongo_helpers(r#"{name: new RegExp('test', 'i')}"#);
+        assert!(result.contains(r#"{"$regularExpression":{"pattern":"test","options":"i"}}"#));
+        assert!(!result.contains("new RegExp"));
+    }
+
+    // ─── Bug fix: distinct field name extraction ───
+
+    #[test]
+    fn parse_distinct_extracts_field_name() {
+        let query = r#"db.users.distinct("city")"#;
+        let parsed = parse_query_string(query).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Distinct));
+        assert_eq!(parsed.args, r#""city""#);
+    }
+
+    #[test]
+    fn parse_distinct_with_filter() {
+        let query = r#"db.users.distinct("city", {active: true})"#;
+        let parsed = parse_query_string(query).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Distinct));
+    }
+
+    // ─── Bug fix: updateMany/replaceOne requires both args ───
+
+    #[test]
+    fn parse_update_many_multiline_with_helpers() {
+        // This is the exact query from the bug report
+        let query = r#"db.creditdailyalerts.updateMany(
+  {
+    type: 'YOLDEE_DISCONNECTED',
+    isDeleted: { $ne: true }
+  },
+  {
+    $set: {
+      status: 'done',
+      updatedAt: new Date()
+    }
+  }
+)"#;
+        let parsed = parse_query_string(query).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::UpdateMany));
+        assert_eq!(parsed.collection, "creditdailyalerts");
+        // Ensure both filter and update are present in args
+        let parts = split_top_level_args(&parsed.args);
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("YOLDEE_DISCONNECTED"));
+        assert!(parts[1].contains("$set"));
+    }
+
+    // ─── Bug fix: strip_comments handles escaped quotes ───
+
+    #[test]
+    fn strip_comments_escaped_quotes() {
+        let input = r#"{msg: "say \"hi\" // not a comment"}"#;
+        let result = strip_comments(input);
+        assert_eq!(result, input); // nothing should be stripped
+    }
+
+    // ─── Bug fix: split_top_level_args handles escaped quotes ───
+
+    #[test]
+    fn split_args_escaped_quotes() {
+        let input = r#"{"name": "he said \"hi\""}, {"$set": {"b": 1}}"#;
+        let parts = split_top_level_args(input);
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains(r#"\"hi\""#));
+        assert!(parts[1].contains("$set"));
+    }
+
+    // ─── Bug fix: chain parsing offset correctness ───
+
+    #[test]
+    fn parse_find_sort_short_collection() {
+        // Short collection name — previously the chain offset bug could miss this
+        let parsed = parse_query_string(r#"db.u.find({}).sort({a: -1})"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.sort.as_deref(), Some("{a: -1}"));
+    }
+
+    #[test]
+    fn parse_find_sort_long_collection() {
+        let parsed = parse_query_string(r#"db.very_long_collection_name.find({}).sort({x: 1}).limit(5)"#).unwrap();
+        assert!(matches!(parsed.query_type, QueryType::Find));
+        assert_eq!(parsed.sort.as_deref(), Some("{x: 1}"));
+        assert_eq!(parsed.limit, Some(5));
+    }
+
+    // ─── Bug fix: multi-byte UTF-8 in preprocess ───
+
+    #[test]
+    fn preprocess_helpers_with_unicode() {
+        // Ensure multi-byte chars before helpers don't panic
+        let input = r#"{name: "日本語", created: new Date()}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains("日本語"));
+        assert!(result.contains(r#"{"$date":"#));
+        assert!(!result.contains("new Date"));
+    }
+
+    #[test]
+    fn preprocess_helpers_with_emoji() {
+        let input = r#"{emoji: "🎉", id: ObjectId('507f1f77bcf86cd799439011')}"#;
+        let result = preprocess_mongo_helpers(input);
+        assert!(result.contains("🎉"));
+        assert!(result.contains(r#"{"$oid":"507f1f77bcf86cd799439011"}"#));
     }
 }
