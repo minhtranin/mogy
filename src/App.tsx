@@ -181,13 +181,14 @@ export default function App() {
 
     try {
       // Step 1: Identify relevant collections
-      const identified = await identifyCollections(text, mongo.collections, abort.signal);
+      const currentMongo = mongoRef.current;
+      const identified = await identifyCollections(text, currentMongo.collections, abort.signal);
       if (abort.signal.aborted) return;
 
       // Step 2: Fetch fields for identified collections in parallel
       const fieldsResults = await Promise.all(
         identified.collections.map((coll) =>
-          listCollectionFields(mongo.selectedDb!, coll).catch(() => [])
+          listCollectionFields(currentMongo.selectedDb!, coll).catch(() => [])
         )
       );
 
