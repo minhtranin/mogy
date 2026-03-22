@@ -154,27 +154,23 @@ export default function App() {
         }
       }
 
-      // Unblock editor render
+      // Load file content BEFORE rendering Editor to avoid race condition
+      // (editorRef.current may exist but viewRef.current is null between render and useEffect)
+      if (session?.current_file) {
+        try {
+          const content = await loadQueryFile(session.current_file);
+          setCurrentFile(session.current_file);
+          setInitialContent(content);
+        } catch { /* file may have been deleted */ }
+      }
+
+      // Unblock editor render — initialContent is ready
       setSessionLoaded(true);
 
       // Restore connection state (uses same session, no duplicate IPC call)
       if (session) {
         mongo.refreshConnections();
         mongo.restoreSession(session);
-
-        // Load file content non-blocking
-        if (session.current_file) {
-          loadQueryFile(session.current_file)
-            .then((content) => {
-              setCurrentFile(session.current_file!);
-              if (editorRef.current) {
-                editorRef.current.setText(content);
-              } else {
-                setInitialContent(content);
-              }
-            })
-            .catch(() => {});
-        }
       }
     };
     init();
@@ -526,6 +522,12 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
+        return;
+      }
+
+      // Fast path: skip all checks for plain keys without modifiers
+      // (let vim/CodeMirror handle hjkl etc. without overhead)
+      if (!e.ctrlKey && !e.altKey && !e.metaKey && !leaderActive.current && e.key !== "?") {
         return;
       }
 

@@ -1,13 +1,185 @@
 import { useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { javascript } from "@codemirror/lang-javascript";
 import { vim, Vim } from "@replit/codemirror-vim";
-import { basicSetup, minimalSetup } from "codemirror";
+import { minimalSetup } from "codemirror";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { bracketMatching, indentOnInput, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { searchKeymap } from "@codemirror/search";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { autocompletion, type CompletionContext, completionKeymap, startCompletion, moveCompletionSelection } from "@codemirror/autocomplete";
 import { editorSaveRef, saveAndQuitAllRef, ensureExCommands } from "../lib/vim-commands";
 import { getCmTheme, type ThemeName } from "../lib/themes";
 import { listCollectionFields } from "../lib/tauri-commands";
+
+// Lean editor setup — no folding, no multi-cursor, no drag-drop, no lint
+// (basicSetup includes all of those which add unnecessary overhead for a query editor)
+const mogyEditorSetup = [
+  lineNumbers(),
+  highlightActiveLineGutter(),
+  history(),
+  drawSelection(),
+  indentOnInput(),
+  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+  bracketMatching(),
+  closeBrackets(),
+  highlightActiveLine(),
+  keymap.of([
+    ...closeBracketsKeymap,
+    ...defaultKeymap,
+    ...searchKeymap,
+    ...historyKeymap,
+  ]),
+];
+
+// Hoisted outside component — allocated once, not per completion call
+const MONGO_OPERATORS = [
+  // Pipeline stages
+  { label: "$match", detail: "stage", apply: "$match: {\n      \n    }" },
+  { label: "$group", detail: "stage", apply: "$group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }" },
+  { label: "$project", detail: "stage", apply: "$project: {\n      field: 1\n    }" },
+  { label: "$sort", detail: "stage", apply: "$sort: {\n      field: 1\n    }" },
+  { label: "$limit", detail: "stage", apply: "$limit: 20" },
+  { label: "$skip", detail: "stage", apply: "$skip: 0" },
+  { label: "$unwind", detail: "stage", apply: "$unwind: \"$field\"" },
+  { label: "$lookup", detail: "stage", apply: "$lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n      }" },
+  { label: "$graphLookup", detail: "stage", apply: "$graphLookup: {\n        from: \"collection\",\n        startWith: \"$field\",\n        connectFromField: \"field\",\n        connectToField: \"_id\",\n        as: \"result\"\n      }" },
+  { label: "$unionWith", detail: "stage", apply: "$unionWith: \"collection\"" },
+  { label: "$addFields", detail: "stage", apply: "$addFields: {\n        newField: \"value\"\n      }" },
+  { label: "$set", detail: "stage/update", apply: "$set: {\n        field: \"value\"\n      }" },
+  { label: "$unset", detail: "stage/update", apply: "$unset: \"field\"" },
+  { label: "$replaceRoot", detail: "stage", apply: "$replaceRoot: { newRoot: \"$field\" }" },
+  { label: "$replaceWith", detail: "stage", apply: "$replaceWith: \"$field\"" },
+  { label: "$count", detail: "stage/accum", apply: "$count: \"total\"" },
+  { label: "$facet", detail: "stage", apply: "$facet: {\n      \n    }" },
+  { label: "$bucket", detail: "stage", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
+  { label: "$bucketAuto", detail: "stage", apply: "$bucketAuto: {\n        groupBy: \"$field\",\n        buckets: 5\n      }" },
+  { label: "$sortByCount", detail: "stage", apply: "$sortByCount: \"$field\"" },
+  { label: "$sample", detail: "stage", apply: "$sample: { size: 10 }" },
+  { label: "$out", detail: "stage", apply: "$out: \"collection\"" },
+  { label: "$merge", detail: "stage", apply: "$merge: {\n      into: \"collection\"\n    }" },
+  // Comparison operators
+  { label: "$eq", detail: "comparison", apply: "$eq: " },
+  { label: "$ne", detail: "comparison", apply: "$ne: " },
+  { label: "$gt", detail: "comparison", apply: "$gt: " },
+  { label: "$gte", detail: "comparison", apply: "$gte: " },
+  { label: "$lt", detail: "comparison", apply: "$lt: " },
+  { label: "$lte", detail: "comparison", apply: "$lte: " },
+  { label: "$in", detail: "comparison", apply: "$in: []" },
+  { label: "$nin", detail: "comparison", apply: "$nin: []" },
+  { label: "$cmp", detail: "comparison", apply: "$cmp: [\"$a\", \"$b\"]" },
+  // Logical operators
+  { label: "$and", detail: "logical", apply: "$and: [{}]" },
+  { label: "$or", detail: "logical", apply: "$or: [{}]" },
+  { label: "$not", detail: "logical", apply: "$not: {}" },
+  { label: "$nor", detail: "logical", apply: "$nor: [{}]" },
+  // Element operators
+  { label: "$exists", detail: "element", apply: "$exists: true" },
+  { label: "$type", detail: "element", apply: "$type: \"string\"" },
+  // Evaluation operators
+  { label: "$expr", detail: "evaluation", apply: "$expr: {}" },
+  { label: "$regex", detail: "evaluation", apply: "$regex: //" },
+  { label: "$text", detail: "evaluation", apply: "$text: { $search: \"\" }" },
+  { label: "$where", detail: "evaluation", apply: "$where: \"\"" },
+  { label: "$mod", detail: "evaluation", apply: "$mod: [, 0]" },
+  { label: "$jsonSchema", detail: "evaluation", apply: "$jsonSchema: {}" },
+  // Array query operators
+  { label: "$all", detail: "array", apply: "$all: []" },
+  { label: "$elemMatch", detail: "array", apply: "$elemMatch: {}" },
+  { label: "$size", detail: "array", apply: "$size: " },
+  // Aggregation expressions — arithmetic
+  { label: "$add", detail: "arithmetic", apply: "$add: [\"$a\", \"$b\"]" },
+  { label: "$subtract", detail: "arithmetic", apply: "$subtract: [\"$a\", \"$b\"]" },
+  { label: "$multiply", detail: "arithmetic", apply: "$multiply: [\"$a\", \"$b\"]" },
+  { label: "$divide", detail: "arithmetic", apply: "$divide: [\"$a\", \"$b\"]" },
+  // String expressions
+  { label: "$concat", detail: "string", apply: "$concat: [\"$a\", \"$b\"]" },
+  { label: "$substr", detail: "string", apply: "$substr: [\"$field\", 0, 5]" },
+  { label: "$substrBytes", detail: "string", apply: "$substrBytes: [\"$field\", 0, 5]" },
+  { label: "$substrCP", detail: "string", apply: "$substrCP: [\"$field\", 0, 5]" },
+  { label: "$toLower", detail: "string", apply: "$toLower: \"$field\"" },
+  { label: "$toUpper", detail: "string", apply: "$toUpper: \"$field\"" },
+  { label: "$trim", detail: "string", apply: "$trim: { input: \"$field\" }" },
+  { label: "$ltrim", detail: "string", apply: "$ltrim: { input: \"$field\" }" },
+  { label: "$rtrim", detail: "string", apply: "$rtrim: { input: \"$field\" }" },
+  { label: "$split", detail: "string", apply: "$split: [\"$field\", \",\"]" },
+  // Array expressions
+  { label: "$arrayElemAt", detail: "array expr", apply: "$arrayElemAt: [\"$field\", 0]" },
+  { label: "$concatArrays", detail: "array expr", apply: "$concatArrays: [\"$a\", \"$b\"]" },
+  { label: "$filter", detail: "array expr", apply: "$filter: {\n        input: \"$field\",\n        as: \"item\",\n        cond: {}\n      }" },
+  { label: "$map", detail: "array expr", apply: "$map: {\n        input: \"$field\",\n        as: \"item\",\n        in: \"$$item\"\n      }" },
+  { label: "$reduce", detail: "array expr", apply: "$reduce: {\n        input: \"$field\",\n        initialValue: 0,\n        in: {}\n      }" },
+  { label: "$slice", detail: "array expr", apply: "$slice: [\"$field\", 5]" },
+  // Conditional expressions
+  { label: "$cond", detail: "conditional", apply: "$cond: {\n        if: {},\n        then: \"\",\n        else: \"\"\n      }" },
+  { label: "$ifNull", detail: "conditional", apply: "$ifNull: [\"$field\", \"default\"]" },
+  { label: "$switch", detail: "conditional", apply: "$switch: {\n        branches: [\n          { case: {}, then: \"\" }\n        ],\n        default: \"\"\n      }" },
+  // Date expressions
+  { label: "$dateToString", detail: "date", apply: "$dateToString: { format: \"%Y-%m-%d\", date: \"$field\" }" },
+  { label: "$dateFromString", detail: "date", apply: "$dateFromString: { dateString: \"\" }" },
+  { label: "$year", detail: "date", apply: "$year: \"$field\"" },
+  { label: "$month", detail: "date", apply: "$month: \"$field\"" },
+  { label: "$dayOfMonth", detail: "date", apply: "$dayOfMonth: \"$field\"" },
+  { label: "$now", detail: "date", apply: "$now" },
+  // Type/conversion expressions
+  { label: "$toString", detail: "type", apply: "$toString: \"$field\"" },
+  { label: "$toInt", detail: "type", apply: "$toInt: \"$field\"" },
+  { label: "$toDouble", detail: "type", apply: "$toDouble: \"$field\"" },
+  { label: "$toBool", detail: "type", apply: "$toBool: \"$field\"" },
+  { label: "$convert", detail: "type", apply: "$convert: { input: \"$field\", to: \"string\" }" },
+  // Accumulators (used in $group)
+  { label: "$sum", detail: "accumulator", apply: "$sum: 1" },
+  { label: "$avg", detail: "accumulator", apply: "$avg: \"$field\"" },
+  { label: "$min", detail: "accumulator", apply: "$min: \"$field\"" },
+  { label: "$max", detail: "accumulator", apply: "$max: \"$field\"" },
+  { label: "$push", detail: "accumulator/update", apply: "$push: \"$field\"" },
+  { label: "$addToSet", detail: "accumulator/update", apply: "$addToSet: \"$field\"" },
+  { label: "$first", detail: "accumulator", apply: "$first: \"$field\"" },
+  { label: "$last", detail: "accumulator", apply: "$last: \"$field\"" },
+  // Update operators
+  { label: "$inc", detail: "update", apply: "$inc: { field: 1 }" },
+  { label: "$mul", detail: "update", apply: "$mul: { field: 2 }" },
+  { label: "$rename", detail: "update", apply: "$rename: { oldField: \"newField\" }" },
+  { label: "$pop", detail: "update", apply: "$pop: { field: 1 }" },
+  { label: "$pull", detail: "update", apply: "$pull: { field: \"value\" }" },
+  { label: "$pullAll", detail: "update", apply: "$pullAll: { field: [] }" },
+  { label: "$each", detail: "update modifier", apply: "$each: []" },
+  { label: "$position", detail: "update modifier", apply: "$position: 0" },
+  { label: "$bit", detail: "update", apply: "$bit: { field: { and: 0 } }" },
+  // Special
+  { label: "$hint", detail: "special", apply: "$hint: {}" },
+  { label: "$comment", detail: "special", apply: "$comment: \"\"" },
+  { label: "$meta", detail: "special", apply: "$meta: \"textScore\"" },
+];
+
+const MONGO_METHODS = [
+  { label: "find", type: "function", detail: "(query)", apply: "find({})" },
+  { label: "findOne", type: "function", detail: "(query)", apply: "findOne({})" },
+  { label: "insertOne", type: "function", detail: "(doc)", apply: "insertOne({})" },
+  { label: "insertMany", type: "function", detail: "([docs])", apply: "insertMany([{}])" },
+  { label: "updateOne", type: "function", detail: "(filter, update)", apply: "updateOne({}, {$set:{}})" },
+  { label: "updateMany", type: "function", detail: "(filter, update)", apply: "updateMany({}, {$set:{}})" },
+  { label: "deleteOne", type: "function", detail: "(query)", apply: "deleteOne({})" },
+  { label: "deleteMany", type: "function", detail: "(query)", apply: "deleteMany({})" },
+  { label: "replaceOne", type: "function", detail: "(filter, doc)", apply: "replaceOne({}, {})" },
+  { label: "count", type: "function", detail: "(query?)", apply: "count({})" },
+  { label: "aggregate", type: "function", detail: "([pipeline])", apply: "aggregate([\n    {\n      $match: {\n        \n      }\n    }\n])" },
+  { label: "distinct", type: "function", detail: "(field, query?)", apply: "distinct(\"\")" },
+  { label: "findOneAndUpdate", type: "function", detail: "(filter, update)", apply: "findOneAndUpdate({}, {$set:{}})" },
+  { label: "findOneAndDelete", type: "function", detail: "(query)", apply: "findOneAndDelete({})" },
+  { label: "findOneAndReplace", type: "function", detail: "(filter, doc)", apply: "findOneAndReplace({}, {})" },
+  { label: "estimatedDocumentCount", type: "function", detail: "()", apply: "estimatedDocumentCount()" },
+  { label: "createIndex", type: "function", detail: "(keys)", apply: "createIndex({})" },
+  { label: "dropIndex", type: "function", detail: "(name)", apply: "dropIndex(\"\")" },
+  { label: "drop", type: "function", detail: "()", apply: "drop()" },
+];
+
+const MONGO_TYPES = [
+  { label: "ObjectId", detail: "(id?)", apply: "ObjectId(\"\")" },
+  { label: "ISODate", detail: "(date?)", apply: "ISODate(\"\")" },
+  { label: "NumberDecimal", detail: "(value)", apply: "NumberDecimal(\"\")" },
+];
 
 interface EditorProps {
   focused: boolean;
@@ -136,7 +308,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
     const cursor = view.state.selection.main.head;
     view.dispatch({
       effects: syntaxCompartment.current.reconfigure(
-        lightweight ? minimalSetup : [basicSetup, javascript()]
+        lightweight ? minimalSetup : [mogyEditorSetup, javascript()]
       ),
       selection: { anchor: cursor },
     });
@@ -158,126 +330,8 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const aggregateStageMatch = lineText.match(/\$(\w*)$/);
       if (aggregateStageMatch) {
         const incomplete = aggregateStageMatch[1] || "";
-        const operators = [
-          // Pipeline stages
-          { label: "$match", detail: "stage", apply: "$match: {\n      \n    }" },
-          { label: "$group", detail: "stage", apply: "$group: {\n      _id: \"$field\",\n      count: { $sum: 1 }\n    }" },
-          { label: "$project", detail: "stage", apply: "$project: {\n      field: 1\n    }" },
-          { label: "$sort", detail: "stage", apply: "$sort: {\n      field: 1\n    }" },
-          { label: "$limit", detail: "stage", apply: "$limit: 20" },
-          { label: "$skip", detail: "stage", apply: "$skip: 0" },
-          { label: "$unwind", detail: "stage", apply: "$unwind: \"$field\"" },
-          { label: "$lookup", detail: "stage", apply: "$lookup: {\n        from: \"collection\",\n        localField: \"field\",\n        foreignField: \"_id\",\n        as: \"result\"\n      }" },
-          { label: "$graphLookup", detail: "stage", apply: "$graphLookup: {\n        from: \"collection\",\n        startWith: \"$field\",\n        connectFromField: \"field\",\n        connectToField: \"_id\",\n        as: \"result\"\n      }" },
-          { label: "$unionWith", detail: "stage", apply: "$unionWith: \"collection\"" },
-          { label: "$addFields", detail: "stage", apply: "$addFields: {\n        newField: \"value\"\n      }" },
-          { label: "$set", detail: "stage/update", apply: "$set: {\n        field: \"value\"\n      }" },
-          { label: "$unset", detail: "stage/update", apply: "$unset: \"field\"" },
-          { label: "$replaceRoot", detail: "stage", apply: "$replaceRoot: { newRoot: \"$field\" }" },
-          { label: "$replaceWith", detail: "stage", apply: "$replaceWith: \"$field\"" },
-          { label: "$count", detail: "stage/accum", apply: "$count: \"total\"" },
-          { label: "$facet", detail: "stage", apply: "$facet: {\n      \n    }" },
-          { label: "$bucket", detail: "stage", apply: "$bucket: {\n        groupBy: \"$field\",\n        boundaries: [],\n        default: \"other\"\n      }" },
-          { label: "$bucketAuto", detail: "stage", apply: "$bucketAuto: {\n        groupBy: \"$field\",\n        buckets: 5\n      }" },
-          { label: "$sortByCount", detail: "stage", apply: "$sortByCount: \"$field\"" },
-          { label: "$sample", detail: "stage", apply: "$sample: { size: 10 }" },
-          { label: "$out", detail: "stage", apply: "$out: \"collection\"" },
-          { label: "$merge", detail: "stage", apply: "$merge: {\n      into: \"collection\"\n    }" },
-          // Comparison operators
-          { label: "$eq", detail: "comparison", apply: "$eq: " },
-          { label: "$ne", detail: "comparison", apply: "$ne: " },
-          { label: "$gt", detail: "comparison", apply: "$gt: " },
-          { label: "$gte", detail: "comparison", apply: "$gte: " },
-          { label: "$lt", detail: "comparison", apply: "$lt: " },
-          { label: "$lte", detail: "comparison", apply: "$lte: " },
-          { label: "$in", detail: "comparison", apply: "$in: []" },
-          { label: "$nin", detail: "comparison", apply: "$nin: []" },
-          { label: "$cmp", detail: "comparison", apply: "$cmp: [\"$a\", \"$b\"]" },
-          // Logical operators
-          { label: "$and", detail: "logical", apply: "$and: [{}]" },
-          { label: "$or", detail: "logical", apply: "$or: [{}]" },
-          { label: "$not", detail: "logical", apply: "$not: {}" },
-          { label: "$nor", detail: "logical", apply: "$nor: [{}]" },
-          // Element operators
-          { label: "$exists", detail: "element", apply: "$exists: true" },
-          { label: "$type", detail: "element", apply: "$type: \"string\"" },
-          // Evaluation operators
-          { label: "$expr", detail: "evaluation", apply: "$expr: {}" },
-          { label: "$regex", detail: "evaluation", apply: "$regex: //" },
-          { label: "$text", detail: "evaluation", apply: "$text: { $search: \"\" }" },
-          { label: "$where", detail: "evaluation", apply: "$where: \"\"" },
-          { label: "$mod", detail: "evaluation", apply: "$mod: [, 0]" },
-          { label: "$jsonSchema", detail: "evaluation", apply: "$jsonSchema: {}" },
-          // Array query operators
-          { label: "$all", detail: "array", apply: "$all: []" },
-          { label: "$elemMatch", detail: "array", apply: "$elemMatch: {}" },
-          { label: "$size", detail: "array", apply: "$size: " },
-          // Aggregation expressions — arithmetic
-          { label: "$add", detail: "arithmetic", apply: "$add: [\"$a\", \"$b\"]" },
-          { label: "$subtract", detail: "arithmetic", apply: "$subtract: [\"$a\", \"$b\"]" },
-          { label: "$multiply", detail: "arithmetic", apply: "$multiply: [\"$a\", \"$b\"]" },
-          { label: "$divide", detail: "arithmetic", apply: "$divide: [\"$a\", \"$b\"]" },
-          // String expressions
-          { label: "$concat", detail: "string", apply: "$concat: [\"$a\", \"$b\"]" },
-          { label: "$substr", detail: "string", apply: "$substr: [\"$field\", 0, 5]" },
-          { label: "$substrBytes", detail: "string", apply: "$substrBytes: [\"$field\", 0, 5]" },
-          { label: "$substrCP", detail: "string", apply: "$substrCP: [\"$field\", 0, 5]" },
-          { label: "$toLower", detail: "string", apply: "$toLower: \"$field\"" },
-          { label: "$toUpper", detail: "string", apply: "$toUpper: \"$field\"" },
-          { label: "$trim", detail: "string", apply: "$trim: { input: \"$field\" }" },
-          { label: "$ltrim", detail: "string", apply: "$ltrim: { input: \"$field\" }" },
-          { label: "$rtrim", detail: "string", apply: "$rtrim: { input: \"$field\" }" },
-          { label: "$split", detail: "string", apply: "$split: [\"$field\", \",\"]" },
-          // Array expressions
-          { label: "$arrayElemAt", detail: "array expr", apply: "$arrayElemAt: [\"$field\", 0]" },
-          { label: "$concatArrays", detail: "array expr", apply: "$concatArrays: [\"$a\", \"$b\"]" },
-          { label: "$filter", detail: "array expr", apply: "$filter: {\n        input: \"$field\",\n        as: \"item\",\n        cond: {}\n      }" },
-          { label: "$map", detail: "array expr", apply: "$map: {\n        input: \"$field\",\n        as: \"item\",\n        in: \"$$item\"\n      }" },
-          { label: "$reduce", detail: "array expr", apply: "$reduce: {\n        input: \"$field\",\n        initialValue: 0,\n        in: {}\n      }" },
-          { label: "$slice", detail: "array expr", apply: "$slice: [\"$field\", 5]" },
-          // Conditional expressions
-          { label: "$cond", detail: "conditional", apply: "$cond: {\n        if: {},\n        then: \"\",\n        else: \"\"\n      }" },
-          { label: "$ifNull", detail: "conditional", apply: "$ifNull: [\"$field\", \"default\"]" },
-          { label: "$switch", detail: "conditional", apply: "$switch: {\n        branches: [\n          { case: {}, then: \"\" }\n        ],\n        default: \"\"\n      }" },
-          // Date expressions
-          { label: "$dateToString", detail: "date", apply: "$dateToString: { format: \"%Y-%m-%d\", date: \"$field\" }" },
-          { label: "$dateFromString", detail: "date", apply: "$dateFromString: { dateString: \"\" }" },
-          { label: "$year", detail: "date", apply: "$year: \"$field\"" },
-          { label: "$month", detail: "date", apply: "$month: \"$field\"" },
-          { label: "$dayOfMonth", detail: "date", apply: "$dayOfMonth: \"$field\"" },
-          { label: "$now", detail: "date", apply: "$now" },
-          // Type/conversion expressions
-          { label: "$toString", detail: "type", apply: "$toString: \"$field\"" },
-          { label: "$toInt", detail: "type", apply: "$toInt: \"$field\"" },
-          { label: "$toDouble", detail: "type", apply: "$toDouble: \"$field\"" },
-          { label: "$toBool", detail: "type", apply: "$toBool: \"$field\"" },
-          { label: "$convert", detail: "type", apply: "$convert: { input: \"$field\", to: \"string\" }" },
-          // Accumulators (used in $group)
-          { label: "$sum", detail: "accumulator", apply: "$sum: 1" },
-          { label: "$avg", detail: "accumulator", apply: "$avg: \"$field\"" },
-          { label: "$min", detail: "accumulator", apply: "$min: \"$field\"" },
-          { label: "$max", detail: "accumulator", apply: "$max: \"$field\"" },
-          { label: "$push", detail: "accumulator/update", apply: "$push: \"$field\"" },
-          { label: "$addToSet", detail: "accumulator/update", apply: "$addToSet: \"$field\"" },
-          { label: "$first", detail: "accumulator", apply: "$first: \"$field\"" },
-          { label: "$last", detail: "accumulator", apply: "$last: \"$field\"" },
-          // Update operators
-          { label: "$inc", detail: "update", apply: "$inc: { field: 1 }" },
-          { label: "$mul", detail: "update", apply: "$mul: { field: 2 }" },
-          { label: "$rename", detail: "update", apply: "$rename: { oldField: \"newField\" }" },
-          { label: "$pop", detail: "update", apply: "$pop: { field: 1 }" },
-          { label: "$pull", detail: "update", apply: "$pull: { field: \"value\" }" },
-          { label: "$pullAll", detail: "update", apply: "$pullAll: { field: [] }" },
-          { label: "$each", detail: "update modifier", apply: "$each: []" },
-          { label: "$position", detail: "update modifier", apply: "$position: 0" },
-          { label: "$bit", detail: "update", apply: "$bit: { field: { and: 0 } }" },
-          // Special
-          { label: "$hint", detail: "special", apply: "$hint: {}" },
-          { label: "$comment", detail: "special", apply: "$comment: \"\"" },
-          { label: "$meta", detail: "special", apply: "$meta: \"textScore\"" },
-        ];
         const filterStr = incomplete ? "$" + incomplete.toLowerCase() : "$";
-        const filtered = operators.filter(s => s.label.toLowerCase().startsWith(filterStr));
+        const filtered = MONGO_OPERATORS.filter(s => s.label.toLowerCase().startsWith(filterStr));
         return {
           from: context.pos - incomplete.length - 1,
           options: filtered,
@@ -307,30 +361,8 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const methodMatch = lineText.match(/db\.\w+\.(\w*)$/);
       if (methodMatch) {
         const incomplete = methodMatch[1] || "";
-        const methods = [
-          { label: "find", type: "function", detail: "(query)", apply: "find({})" },
-          { label: "findOne", type: "function", detail: "(query)", apply: "findOne({})" },
-          { label: "insertOne", type: "function", detail: "(doc)", apply: "insertOne({})" },
-          { label: "insertMany", type: "function", detail: "([docs])", apply: "insertMany([{}])" },
-          { label: "updateOne", type: "function", detail: "(filter, update)", apply: "updateOne({}, {$set:{}})" },
-          { label: "updateMany", type: "function", detail: "(filter, update)", apply: "updateMany({}, {$set:{}})" },
-          { label: "deleteOne", type: "function", detail: "(query)", apply: "deleteOne({})" },
-          { label: "deleteMany", type: "function", detail: "(query)", apply: "deleteMany({})" },
-          { label: "replaceOne", type: "function", detail: "(filter, doc)", apply: "replaceOne({}, {})" },
-          { label: "count", type: "function", detail: "(query?)", apply: "count({})" },
-          { label: "aggregate", type: "function", detail: "([pipeline])", apply: "aggregate([\n    {\n      $match: {\n        \n      }\n    }\n])" },
-          { label: "distinct", type: "function", detail: "(field, query?)", apply: "distinct(\"\")" },
-          { label: "findOneAndUpdate", type: "function", detail: "(filter, update)", apply: "findOneAndUpdate({}, {$set:{}})" },
-          { label: "findOneAndDelete", type: "function", detail: "(query)", apply: "findOneAndDelete({})" },
-          { label: "findOneAndReplace", type: "function", detail: "(filter, doc)", apply: "findOneAndReplace({}, {})" },
-          { label: "estimatedDocumentCount", type: "function", detail: "()", apply: "estimatedDocumentCount()" },
-          { label: "createIndex", type: "function", detail: "(keys)", apply: "createIndex({})" },
-          { label: "dropIndex", type: "function", detail: "(name)", apply: "dropIndex(\"\")" },
-          { label: "drop", type: "function", detail: "()", apply: "drop()" },
-        ];
-
         const filter = incomplete.toLowerCase();
-        const filtered = methods.filter(m => m.label.startsWith(filter));
+        const filtered = MONGO_METHODS.filter(m => m.label.startsWith(filter));
 
         return {
           from: context.pos - incomplete.length,
@@ -348,12 +380,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       const typeMatch = context.matchBefore(/[A-Z]\w*/);
       if (typeMatch && typeMatch.text.length > 0) {
         const filter = typeMatch.text.toLowerCase();
-        const types = [
-          { label: "ObjectId", detail: "(id?)", apply: "ObjectId(\"\")" },
-          { label: "ISODate", detail: "(date?)", apply: "ISODate(\"\")" },
-          { label: "NumberDecimal", detail: "(value)", apply: "NumberDecimal(\"\")" },
-        ];
-        const filtered = types.filter(t => t.label.toLowerCase().startsWith(filter));
+        const filtered = MONGO_TYPES.filter(t => t.label.toLowerCase().startsWith(filter));
         if (filtered.length === 0) return null;
         return {
           from: typeMatch.from,
@@ -473,7 +500,7 @@ export default forwardRef<EditorHandle, EditorProps>(function Editor(
       doc: initialContent || "// Ctrl+Enter to run query\n\ndb.collection.find({})\n",
       extensions: [
         vim(),
-        syntaxCompartment.current.of(lightweight ? minimalSetup : [basicSetup, javascript()]),
+        syntaxCompartment.current.of(lightweight ? minimalSetup : [mogyEditorSetup, javascript()]),
         themeCompartment.current.of(getCmTheme(theme)),
         autocompletion({ override: [mongoCompletion], defaultKeymap: true, activateOnTyping: true }),
         // Ctrl+N: navigate down if popup open, otherwise open autocomplete
