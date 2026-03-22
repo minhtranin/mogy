@@ -20,17 +20,20 @@ export function useUpdater(): UpdateState {
   const updateRef = useRef<Awaited<ReturnType<typeof check>> | null>(null);
 
   useEffect(() => {
-    check()
-      .then((update) => {
-        if (update) {
-          updateRef.current = update;
-          setVersion(update.version);
-          setAvailable(true);
-        }
-      })
-      .catch((e) => {
-        console.warn("[mogy] update check failed:", e);
-      });
+    const timer = setTimeout(() => {
+      check()
+        .then((update) => {
+          if (update) {
+            updateRef.current = update;
+            setVersion(update.version);
+            setAvailable(true);
+          }
+        })
+        .catch((e) => {
+          console.warn("[mogy] update check failed:", e);
+        });
+    }, 5000);
+    return () => clearTimeout(timer);
   }, []);
 
   const install = useCallback(() => {

@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026.22.3] - 2026-03-22
+
+### Features
+- **Comprehensive MongoDB operator autocomplete**: Added all MongoDB operators to `$` autocomplete — comparison, logical, element, evaluation, array, string, date, type conversion, accumulators, update operators, pipeline stages, and conditionals
+- **Fuzzy collection matching** (mogy-ai): Replaced custom Jaccard+substring matching with `sahilm/fuzzy` for more accurate collection identification, ranked by score, capped at 5
+
+### Bug Fixes
+- **Stale closure in AI query flow**: `handleRunQuery` captured empty collections from initial render — fixed with `mongoRef.current` for fresh values
+
 ## [2026.20.3] - 2026-03-20
 
 ### Features

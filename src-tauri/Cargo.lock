@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "mogy"
-version = "2026.19.3"
+version = "2026.22.3"
 dependencies = [
  "dirs",
  "json5",

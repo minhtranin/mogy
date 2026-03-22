@@ -118,17 +118,19 @@ pub async fn save_session_cmd(
     cached_collections: Option<std::collections::HashMap<String, Vec<String>>>,
     cached_fields: Option<std::collections::HashMap<String, Vec<String>>>,
 ) -> Result<(), String> {
-    session::save_session(&Session {
-        connection,
-        database,
-        collection,
-        last_editor_content,
-        current_file,
-        layout_direction,
-        color_scheme,
-        lightweight_editor,
-        cached_databases,
-        cached_collections,
-        cached_fields,
-    })
+    // Merge with existing session — always overwrite primary state,
+    // only overwrite optional fields when explicitly provided
+    let mut s = session::load_session();
+    s.connection = connection;
+    s.database = database;
+    s.collection = collection;
+    if last_editor_content.is_some() { s.last_editor_content = last_editor_content; }
+    if current_file.is_some() { s.current_file = current_file; }
+    if layout_direction.is_some() { s.layout_direction = layout_direction; }
+    if color_scheme.is_some() { s.color_scheme = color_scheme; }
+    if lightweight_editor.is_some() { s.lightweight_editor = lightweight_editor; }
+    if cached_databases.is_some() { s.cached_databases = cached_databases; }
+    if cached_collections.is_some() { s.cached_collections = cached_collections; }
+    if cached_fields.is_some() { s.cached_fields = cached_fields; }
+    session::save_session(&s)
 }

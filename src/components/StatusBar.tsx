@@ -3,7 +3,7 @@ import type { PanelLayout } from "../hooks/usePanelFocus";
 import type { UpdateState } from "../hooks/useUpdater";
 
 const appWindow = getCurrentWindow();
-const APP_VERSION = "2026.19.3";
+const APP_VERSION = "2026.22.3";
 
 interface StatusBarProps {
   activeConnection: string | null;

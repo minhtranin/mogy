@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import {
   type ConnectionConfig,
+  type Session,
   listConnections,
   saveConnection,
   deleteConnection,
@@ -8,7 +9,6 @@ import {
   disconnectFromServer,
   listDatabases,
   listCollections,
-  loadSession,
   saveSession,
   seedFieldCache,
   getFieldCache,
@@ -197,79 +197,69 @@ export function useMongoConnection() {
     }
   }, [selectedDb, activeConnection, databases, persistSession]);
 
-  // Restore session on mount - optimistic restore with parallel fetch
-  useEffect(() => {
-    const restore = async () => {
-      // Run refreshConnections and loadSession in parallel
-      const [, session] = await Promise.all([refreshConnections(), loadSession()]);
-      try {
-        if (session.connection) {
-          // Optimistic restore: immediately show cached databases/collections
-          if (session.cached_databases) {
-            cachedDbsRef.current = session.cached_databases;
-            const connDbs = session.cached_databases[session.connection];
-            if (connDbs) setDatabases(connDbs);
-          }
-          if (session.database && session.cached_collections) {
-            cachedCollsRef.current = session.cached_collections;
-            const collKey = `${session.connection}::${session.database}`;
-            const connColls = session.cached_collections[collKey];
-            if (connColls) {
-              setSelectedDb(session.database);
-              setCollections(connColls);
-            }
-          }
-          if (session.collection) {
-            setSelectedCollection(session.collection);
-          }
-          // Pre-warm in-memory field cache from session
-          if (session.cached_fields) {
-            seedFieldCache(session.cached_fields).catch(() => {});
-          }
+  const restoreSession = useCallback(async (session: Session) => {
+    if (!session.connection) return;
 
-          setLoading(true);
-          try {
-            const result = await connectToServer(session.connection);
-            setActiveConnection(result.name);
-
-            // Parallel fetch databases and collections
-            const [dbs, colls] = await Promise.all([
-              listDatabases(),
-              session.database ? listCollections(session.database) : Promise.resolve([]),
-            ]);
-
-            setDatabases(dbs);
-            const db = session.database || result.default_database;
-            if (db) {
-              setSelectedDb(db);
-              setCollections(colls);
-            }
-            if (session.collection) {
-              setSelectedCollection(session.collection);
-            }
-
-            // Persist with fresh caches
-            persistSession(
-              result.name,
-              db || session.database,
-              session.collection,
-              null,
-              null,
-              dbs,
-              db ? colls : null
-            );
-          } catch {
-            // Session connection no longer valid, ignore
-          } finally {
-            setLoading(false);
-          }
-        }
-      } catch {
-        // No session, that's fine
+    // Optimistic restore: immediately show cached databases/collections
+    if (session.cached_databases) {
+      cachedDbsRef.current = session.cached_databases;
+      const connDbs = session.cached_databases[session.connection];
+      if (connDbs) setDatabases(connDbs);
+    }
+    if (session.database && session.cached_collections) {
+      cachedCollsRef.current = session.cached_collections;
+      const collKey = `${session.connection}::${session.database}`;
+      const connColls = session.cached_collections[collKey];
+      if (connColls) {
+        setSelectedDb(session.database);
+        setCollections(connColls);
       }
-    };
-    restore();
-  }, [refreshConnections, persistSession]);
+    }
+    if (session.collection) {
+      setSelectedCollection(session.collection);
+    }
+    // Pre-warm in-memory field cache from session
+    if (session.cached_fields) {
+      seedFieldCache(session.cached_fields).catch(() => {});
+    }
+
+    setLoading(true);
+    try {
+      const result = await connectToServer(session.connection);
+      setActiveConnection(result.name);
+
+      // Parallel fetch databases and collections
+      const [dbs, colls] = await Promise.all([
+        listDatabases(),
+        session.database ? listCollections(session.database) : Promise.resolve([]),
+      ]);
+
+      setDatabases(dbs);
+      const db = session.database || result.default_database;
+      if (db) {
+        setSelectedDb(db);
+        setCollections(colls);
+      }
+      if (session.collection) {
+        setSelectedCollection(session.collection);
+      }
+
+      // Persist with fresh caches
+      persistSession(
+        result.name,
+        db || session.database,
+        session.collection,
+        null,
+        null,
+        dbs,
+        db ? colls : null
+      );
+    } catch {
+      // Session connection no longer valid, ignore
+    } finally {
+      setLoading(false);
+    }
+  }, [persistSession]);
 
   const getCachedMaps = useCallback(() => ({
     databases: cachedDbsRef.current,
@@ -296,6 +286,7 @@ export function useMongoConnection() {
       selectCollection,
       setError,
       getCachedMaps,
+      restoreSession,
     }),
     [
       connections,
@@ -316,6 +307,7 @@ export function useMongoConnection() {
       selectCollection,
       setError,
       getCachedMaps,
+      restoreSession,
     ]
   );
 }

@@ -114,29 +114,71 @@ export default function App() {
     }
   }, []);
 
-  // Load keybindings from settings on mount
+  // Load settings + session in parallel on mount, single loadSession call
   useEffect(() => {
-    loadSettings()
-      .then((raw) => {
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed.keybindings) {
-            setBindings(mergeBindings(DEFAULT_BINDINGS, parsed.keybindings));
-          }
-          if (parsed.layoutDirection === "horizontal" || parsed.layoutDirection === "vertical") {
-            setLayoutDirection(parsed.layoutDirection);
-          }
-          if (parsed.theme === "mocha" || parsed.theme === "latte") {
-            setCurrentTheme(parsed.theme);
-            applyCssVariables(parsed.theme);
-            editorRef.current?.setTheme(parsed.theme);
-          }
-        } catch {
-          // Invalid settings, use defaults
+    const init = async () => {
+      const [rawSettings, session] = await Promise.all([
+        loadSettings().catch(() => "{}"),
+        loadSession().catch(() => null),
+      ]);
+
+      // Apply settings
+      try {
+        const parsed = JSON.parse(rawSettings);
+        if (parsed.keybindings) {
+          setBindings(mergeBindings(DEFAULT_BINDINGS, parsed.keybindings));
         }
-      })
-      .catch(() => {});
-  }, []);
+        if (parsed.layoutDirection === "horizontal" || parsed.layoutDirection === "vertical") {
+          setLayoutDirection(parsed.layoutDirection);
+        }
+        if (parsed.theme === "mocha" || parsed.theme === "latte") {
+          setCurrentTheme(parsed.theme);
+          applyCssVariables(parsed.theme);
+          editorRef.current?.setTheme(parsed.theme);
+        }
+      } catch {
+        // Invalid settings, use defaults
+      }
+
+      // Apply session UI state
+      if (session) {
+        if (session.layout_direction === "horizontal" || session.layout_direction === "vertical") {
+          setLayoutDirection(session.layout_direction);
+        }
+        if (session.color_scheme) {
+          setCurrentTheme(session.color_scheme as ThemeName);
+          applyCssVariables(session.color_scheme as ThemeName);
+        }
+        if (session.lightweight_editor) {
+          setLightweightEditor(true);
+        }
+      }
+
+      // Unblock editor render
+      setSessionLoaded(true);
+
+      // Restore connection state (uses same session, no duplicate IPC call)
+      if (session) {
+        mongo.refreshConnections();
+        mongo.restoreSession(session);
+
+        // Load file content non-blocking
+        if (session.current_file) {
+          loadQueryFile(session.current_file)
+            .then((content) => {
+              setCurrentFile(session.current_file!);
+              if (editorRef.current) {
+                editorRef.current.setText(content);
+              } else {
+                setInitialContent(content);
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    };
+    init();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveCurrentSession = useCallback(async () => {
     const content = editorRef.current?.getText() ?? "";
@@ -639,43 +681,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
-  // Restore session on mount
   const [initialContent, setInitialContent] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    loadSession()
-      .then((session) => {
-        if (session.layout_direction === "horizontal" || session.layout_direction === "vertical") {
-          setLayoutDirection(session.layout_direction);
-        }
-        if (session.color_scheme && session.color_scheme !== currentTheme) {
-          setCurrentTheme(session.color_scheme as ThemeName);
-          applyCssVariables(session.color_scheme as ThemeName);
-        }
-        if (session.lightweight_editor) {
-          setLightweightEditor(true);
-        }
-        // Show editor immediately — don't block on file load
-        setSessionLoaded(true);
-        // Load file content non-blocking, update editor once mounted
-        if (session.current_file) {
-          loadQueryFile(session.current_file)
-            .then((content) => {
-              setCurrentFile(session.current_file!);
-              // Editor may already be mounted; setText if so, else set initialContent
-              if (editorRef.current) {
-                editorRef.current.setText(content);
-              } else {
-                setInitialContent(content);
-              }
-            })
-            .catch(() => {});
-        }
-      })
-      .catch(() => {
-        setSessionLoaded(true);
-      });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle app close — save session then close window
   const handleAppClose = useCallback(async () => {
