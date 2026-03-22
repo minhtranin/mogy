@@ -18,6 +18,7 @@ export interface KeyBindingMap {
   "leader.newFile": string;
   "leader.commandPalette": string;
   "leader.fullscreen": string;
+  "leader.quit": string;
 }
 
 export const DEFAULT_BINDINGS: KeyBindingMap = {
@@ -40,6 +41,7 @@ export const DEFAULT_BINDINGS: KeyBindingMap = {
   "leader.newFile": "c",
   "leader.commandPalette": "p",
   "leader.fullscreen": "Enter",
+  "leader.quit": "q",
 };
 
 export function mergeBindings(

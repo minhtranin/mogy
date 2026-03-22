@@ -56,6 +56,10 @@ export function ensureExCommands() {
     saveAndQuitAllRef.current?.();
   });
 
+  Vim.defineEx("qa", "qa", () => {
+    saveAndQuitAllRef.current?.();
+  });
+
   // gc in visual mode — toggle line comments
   Vim.defineAction("toggleComment", (cm: any) => {
     const sel = cm.listSelections()[0];

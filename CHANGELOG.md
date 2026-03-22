@@ -8,6 +8,16 @@
 
 ### Bug Fixes
 - **Stale closure in AI query flow**: `handleRunQuery` captured empty collections from initial render — fixed with `mongoRef.current` for fresh values
+- **Session merge overwrites**: Layout direction, color scheme, and other settings were wiped when connection hook saved session — now merges instead of full overwrite
+
+### Performance
+- **Deduplicated session load**: `loadSettings` + `loadSession` now run in a single parallel `Promise.all` — removed duplicate `loadSession` IPC call
+- **Deferred update check**: Updater check delayed 5s after startup to avoid competing with app initialization
+
+### Other
+- `:qa` vim command — save and quit (same as `:wqa`)
+- `Ctrl+Space q` leader shortcut — save and quit
+- "Save and Quit" command palette item
 
 ## [2026.20.3] - 2026-03-20
 

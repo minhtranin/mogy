@@ -492,6 +492,15 @@ export default function App() {
         setLightweightEditor(prev => !prev);
       },
     },
+    {
+      id: "save-and-quit",
+      label: "Save and Quit",
+      hint: "^Space q / :wqa",
+      action: () => {
+        setShowCommandPalette(false);
+        handleAppCloseRef.current();
+      },
+    },
   ], []);
 
   // Stable refs for capture handler
@@ -673,6 +682,10 @@ export default function App() {
           e.preventDefault();
           e.stopPropagation();
           getCurrentWindow().toggleMaximize();
+        } else if (matchesLeaderKey(e, kb["leader.quit"])) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleAppCloseRef.current();
         }
       }
     };
@@ -716,6 +729,9 @@ export default function App() {
       getCurrentWindow().close();
     });
   }, []);
+
+  const handleAppCloseRef = useRef(handleAppClose);
+  handleAppCloseRef.current = handleAppClose;
 
   // :wqa handler — save and quit
   const handleSaveAndQuit = useCallback(() => {
